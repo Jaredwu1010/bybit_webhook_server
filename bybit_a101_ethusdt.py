@@ -39,8 +39,8 @@ async def place_order(symbol: str, side: str, qty: float):
         "timeInForce": "IOC"
     }
 
-    payload_json = json.dumps(payload, separators=(",", ":"))
-    to_sign = timestamp + api_key + payload_json
+    payload_str = json.dumps(payload, separators=(",", ":"))
+    to_sign = timestamp + api_key + payload_str
     signature = hmac.new(api_secret.encode("utf-8"), to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
 
     headers = {
@@ -53,7 +53,7 @@ async def place_order(symbol: str, side: str, qty: float):
     print(f"[Bybit] 下單請求：{payload}")
 
     async with httpx.AsyncClient() as client:
-        response = await client.post(endpoint, headers=headers, json=payload)
+        response = await client.post(endpoint, headers=headers, data=payload_str)
         print(f"[Bybit] 回應：{response.status_code} | {response.text}")
         return response.json()
 
