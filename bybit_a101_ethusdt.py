@@ -29,6 +29,8 @@ async def place_order(symbol: str, side: str, qty: float):
     base_url = os.environ['BYBIT_API_URL']
     endpoint = f"{base_url}/v5/order/create"
 
+    print(f"[Debug] 讀取的 API_KEY 開頭: {api_key[:5]}..., API_SECRET 開頭: {api_secret[:5]}..., URL: {base_url}")
+
     timestamp = str(int(time.time() * 1000))
     payload = {
         "category": "linear",
@@ -51,6 +53,7 @@ async def place_order(symbol: str, side: str, qty: float):
     }
 
     print(f"[Bybit] 下單請求：{payload}")
+    print(f"[Bybit] HTTP headers：{headers}")
 
     async with httpx.AsyncClient() as client:
         response = await client.post(endpoint, headers=headers, data=payload_str)
