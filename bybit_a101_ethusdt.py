@@ -2,6 +2,10 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import httpx
 import os
+import time
+import hmac
+import hashlib
+import json
 
 app = FastAPI()
 
@@ -18,14 +22,14 @@ class WebhookPayload(BaseModel):
     symbol: str
     time: str
 
-# === Bybit 下單函數（帶簽名） ===
+# === Bybit v5 下單函數（含簽名） ===
 async def place_order(symbol: str, side: str, qty: float):
-    endpoint = f"{os.environ['BYBIT_API_URL']}/v5/order/create"
-    headers = {
-        "X-BYBIT-API-KEY": os.environ['BYBIT_API_KEY'],
-        "Content-Type": "application/json"
-    }
-    
+    api_key = os.environ['BYBIT_API_KEY']
+    api_secret = os.environ['BYBIT_API_SECRET']
+    base_url = os.environ['BYBIT_API_URL']
+    endpoint = f"{base_url}/v5/order/create"
+
+    timestamp = str(int(time.time() * 1000))
     payload = {
         "category": "linear",
         "symbol": symbol,
@@ -33,6 +37,17 @@ async def place_order(symbol: str, side: str, qty: float):
         "orderType": "Market",
         "qty": qty,
         "timeInForce": "IOC"
+    }
+
+    payload_json = json.dumps(payload, separators=(",", ":"))
+    to_sign = timestamp + api_key + payload_json
+    signature = hmac.new(api_secret.encode("utf-8"), to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    headers = {
+        "X-BYBIT-API-KEY": api_key,
+        "X-BYBIT-API-SIGN": signature,
+        "X-BYBIT-API-TIMESTAMP": timestamp,
+        "Content-Type": "application/json"
     }
 
     print(f"[Bybit] 下單請求：{payload}")
