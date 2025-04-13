@@ -1,32 +1,31 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from pydantic import BaseModel
 import httpx
 import os
-import time
 
 app = FastAPI()
 
-# ✅ 讀取 Bybit API 金鑰（來自 Render 環境變數）
-BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
-BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
-BYBIT_API_URL = "https://api-testnet.bybit.com"  # ✅ 改為測試網 URL
+# === 型別定義 ===
+class WebhookPayloadData(BaseModel):
+    action: str
+    position_size: float
 
-# 📥 TradingView 傳來的 webhook 格式對應
 class WebhookPayload(BaseModel):
-    data: dict
+    data: WebhookPayloadData
     price: float
     signal_type: str
     order_type: str
     symbol: str
     time: str
 
-# 🧠 Bybit 下單函式（市價單）
+# === Bybit 下單函數（帶簽名） ===
 async def place_order(symbol: str, side: str, qty: float):
-    endpoint = f"{BYBIT_API_URL}/v5/order/create"
+    endpoint = f"{os.environ['BYBIT_API_URL']}/v5/order/create"
     headers = {
-        "X-BYBIT-API-KEY": BYBIT_API_KEY,
+        "X-BYBIT-API-KEY": os.environ['BYBIT_API_KEY'],
         "Content-Type": "application/json"
     }
+    
     payload = {
         "category": "linear",
         "symbol": symbol,
@@ -35,24 +34,30 @@ async def place_order(symbol: str, side: str, qty: float):
         "qty": qty,
         "timeInForce": "IOC"
     }
+
+    print(f"[Bybit] 下單請求：{payload}")
+
     async with httpx.AsyncClient() as client:
         response = await client.post(endpoint, headers=headers, json=payload)
+        print(f"[Bybit] 回應：{response.status_code} | {response.text}")
         return response.json()
 
-# 🚀 Webhook 接收入口
+# === Webhook 接收入口 ===
 @app.post("/webhook")
 async def webhook_handler(payload: WebhookPayload):
-    action = payload.data.get("action")
-    size = float(payload.data.get("position_size", 0))
+    action = payload.data.action
+    size = float(payload.data.position_size)
     symbol = payload.symbol
     order_type = payload.order_type
-    print(f"[Webhook] 接收到訊號：{order_type} | {action} {size} {symbol}")
+
+    print(f"[Webhook] 接收到訊號：{order_type} | {action} | {symbol} | size={size}")
 
     if size == 0:
-        print("⚠️ 這是平倉訊號，尚未實作處理邏輯。")
-        return {"status": "ok", "message": "Received flat close command."}
+        print("⚠️ 倉量為 0，忽略下單請求")
+        return {"status": "ok", "message": "倉量為 0 不處理"}
 
     side = "Buy" if action == "buy" else "Sell"
     result = await place_order(symbol, side, size)
-    print(f"[Bybit] 下單結果：{result}")
+    print(f"[Webhook] 完成下單：{result}")
+
     return {"status": "success", "bybit_response": result}
