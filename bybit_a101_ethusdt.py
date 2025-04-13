@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import httpx
+from httpx import Headers
 import os
 import time
 import hmac
@@ -45,12 +46,12 @@ async def place_order(symbol: str, side: str, qty: float):
     to_sign = timestamp + api_key + payload_str
     signature = hmac.new(api_secret.encode("utf-8"), to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
 
-    headers = {
+    headers = Headers({
         "X-BYBIT-API-KEY": api_key,
         "X-BYBIT-API-SIGN": signature,
         "X-BYBIT-API-TIMESTAMP": timestamp,
         "Content-Type": "application/json"
-    }
+    })
 
     print(f"[Bybit] 下單請求：{payload}")
     print(f"[Bybit] HTTP headers：{headers}")
