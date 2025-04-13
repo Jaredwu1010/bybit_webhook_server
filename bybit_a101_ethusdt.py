@@ -9,7 +9,7 @@ app = FastAPI()
 # ✅ 讀取 Bybit API 金鑰（來自 Render 環境變數）
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
-BYBIT_API_URL = "https://api.bybit.com"  # 實盤用 URL；測試網用 https://api-testnet.bybit.com
+BYBIT_API_URL = "https://api-testnet.bybit.com"  # ✅ 改為測試網 URL
 
 # 📥 TradingView 傳來的 webhook 格式對應
 class WebhookPayload(BaseModel):
