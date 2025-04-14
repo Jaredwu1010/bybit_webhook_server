@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import httpx
-from httpx import Headers
 import os
 import time
 import hmac
@@ -23,7 +22,7 @@ class WebhookPayload(BaseModel):
     symbol: str
     time: str
 
-# === Bybit v5 下單函數（含簽名） ===
+# === Bybit v5 下單函數（簽名修正版）===
 async def place_order(symbol: str, side: str, qty: float):
     api_key = os.environ['BYBIT_API_KEY']
     api_secret = os.environ['BYBIT_API_SECRET']
@@ -46,19 +45,19 @@ async def place_order(symbol: str, side: str, qty: float):
     to_sign = timestamp + api_key + payload_str
     signature = hmac.new(api_secret.encode("utf-8"), to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
 
-    headers = Headers({
+    # ✅ 直接用 dict 建立 headers，保留大小寫
+    headers = {
         "X-BYBIT-API-KEY": api_key,
         "X-BYBIT-API-SIGN": signature,
         "X-BYBIT-API-TIMESTAMP": timestamp,
         "Content-Type": "application/json"
-    })
+    }
 
     print(f"[Bybit] 下單請求：{payload}")
     print(f"[Bybit] HTTP headers：{headers}")
 
     async with httpx.AsyncClient() as client:
-        # ✅ 用 dict(headers) 保留大小寫後傳遞，解決 Bybit 無法識別 header 問題
-        response = await client.post(endpoint, headers=dict(headers), data=payload_str)
+        response = await client.post(endpoint, headers=headers, data=payload_str)
         print(f"[Bybit] 回應：{response.status_code} | {response.text}")
         return response.json()
 
