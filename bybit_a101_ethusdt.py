@@ -57,7 +57,8 @@ async def place_order(symbol: str, side: str, qty: float):
     print(f"[Bybit] HTTP headers：{headers}")
 
     async with httpx.AsyncClient() as client:
-        response = await client.post(endpoint, headers=headers, data=payload_str)
+        # ✅ 用 dict(headers) 保留大小寫後傳遞，解決 Bybit 無法識別 header 問題
+        response = await client.post(endpoint, headers=dict(headers), data=payload_str)
         print(f"[Bybit] 回應：{response.status_code} | {response.text}")
         return response.json()
 
