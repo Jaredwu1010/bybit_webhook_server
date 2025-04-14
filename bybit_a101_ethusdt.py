@@ -42,7 +42,7 @@ async def place_order(symbol: str, side: str, qty: float):
         "timeInForce": "IOC"
     }
 
-    payload_str = json.dumps(payload, separators=(",", ":"))
+    payload_str = json.dumps(payload, separators=(',', ':'))
     to_sign = timestamp + api_key + payload_str
     signature = hmac.new(api_secret.encode("utf-8"), to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
 
