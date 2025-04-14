@@ -22,36 +22,40 @@ class WebhookPayload(BaseModel):
     symbol: str
     time: str
 
-# === Bybit v5 下單函數（簽名修正版）===
+# === Bybit v5 下單函數（修正版）===
 async def place_order(symbol: str, side: str, qty: float):
     api_key = os.environ['BYBIT_API_KEY']
     api_secret = os.environ['BYBIT_API_SECRET']
     base_url = os.environ['BYBIT_API_URL']
     endpoint = f"{base_url}/v5/order/create"
 
-    print(f"[Debug] 讀取的 API_KEY 開頭: {api_key[:5]}..., API_SECRET 開頭: {api_secret[:5]}..., URL: {base_url}")
-
     timestamp = str(int(time.time() * 1000))
+    recv_window = "50000"
+
     payload = {
         "category": "linear",
         "symbol": symbol,
         "side": side,
         "orderType": "Market",
-        "qty": qty,
+        "qty": str(qty),  # Bybit 要求 qty 為 string
         "timeInForce": "IOC"
     }
 
-    payload_str = json.dumps(payload, separators=(',', ':'))
-    to_sign = timestamp + api_key + payload_str
-    signature = hmac.new(api_secret.encode("utf-8"), to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    payload_str = json.dumps(payload, separators=(",", ":"))
+    sign_str = timestamp + api_key + recv_window + payload_str
+    signature = hmac.new(
+        api_secret.encode("utf-8"),
+        sign_str.encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()
 
-    # ✅ 直接用 dict 建立 headers，保留大小寫
-    headers = {
-        "X-BYBIT-API-KEY": api_key,
-        "X-BYBIT-API-SIGN": signature,
-        "X-BYBIT-API-TIMESTAMP": timestamp,
+    headers = httpx.Headers({
+        "X-BAPI-API-KEY": api_key,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": recv_window,
+        "X-BAPI-SIGN": signature,
         "Content-Type": "application/json"
-    }
+    })
 
     print(f"[Bybit] 下單請求：{payload}")
     print(f"[Bybit] HTTP headers：{headers}")
