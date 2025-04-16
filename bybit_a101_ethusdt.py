@@ -1,6 +1,5 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
-from typing import Optional
 import httpx
 import os
 import time
@@ -10,25 +9,26 @@ import json
 
 app = FastAPI()
 
-# === 策略狀態紀錄（MDD 控制） ===
-strategy_status = {}
-MDD_LIMIT = 10.0  # 最大回撤百分比
-
-# === 型別定義 ===
+# === Webhook 資料結構定義 ===
 class WebhookPayloadData(BaseModel):
-    action: Optional[str] = None
-    position_size: Optional[float] = 0.0
+    action: str = None
+    position_size: float = 0
 
 class WebhookPayload(BaseModel):
-    strategy_id: Optional[str] = None
-    signal_type: Optional[str] = None
-    equity: Optional[float] = None
-    timestamp: Optional[str] = None
-    data: Optional[WebhookPayloadData] = None
-    price: Optional[float] = None
-    order_type: Optional[str] = None
-    symbol: Optional[str] = None
-    time: Optional[str] = None
+    strategy_id: str
+    signal_type: str
+    equity: float = None
+    symbol: str = None
+    order_type: str = None
+    data: WebhookPayloadData = None
+    secret: str = None
+
+# === MDD 停單邏輯 ===
+MAX_DRAWDOWN_PERCENT = float(os.getenv("MAX_DRAWDOWN", 10))
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "abc123xyz")
+
+max_equity = {}
+strategy_status = {}
 
 # === Bybit 下單函數 ===
 async def place_order(symbol: str, side: str, qty: float):
@@ -39,7 +39,6 @@ async def place_order(symbol: str, side: str, qty: float):
 
     timestamp = str(int(time.time() * 1000))
     recv_window = "50000"
-
     payload = {
         "category": "linear",
         "symbol": symbol,
@@ -51,88 +50,78 @@ async def place_order(symbol: str, side: str, qty: float):
 
     payload_str = json.dumps(payload, separators=(",", ":"))
     sign_str = timestamp + api_key + recv_window + payload_str
-    signature = hmac.new(
-        api_secret.encode("utf-8"),
-        sign_str.encode("utf-8"),
-        hashlib.sha256
-    ).hexdigest()
+    signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
 
-    headers = httpx.Headers({
+    headers = {
         "X-BAPI-API-KEY": api_key,
         "X-BAPI-TIMESTAMP": timestamp,
         "X-BAPI-RECV-WINDOW": recv_window,
         "X-BAPI-SIGN": signature,
         "Content-Type": "application/json"
-    })
-
-    print(f"[Bybit] 下單請求：{payload}")
-    print(f"[Bybit] HTTP headers：{headers}")
+    }
 
     async with httpx.AsyncClient() as client:
         response = await client.post(endpoint, headers=headers, data=payload_str)
-        print(f"[Bybit] 回應：{response.status_code} | {response.text}")
         return response.json()
 
-# === Webhook 接收入口 ===
+# === Webhook 接收主邏輯 ===
 @app.post("/webhook")
 async def webhook_handler(payload: WebhookPayload):
-    sid = payload.strategy_id or payload.symbol or "unknown"
-    signal = payload.signal_type
+    sid = payload.strategy_id
 
-    # === MDD 控制邏輯 ===
-    if signal == "equity_update" and payload.equity is not None:
-        equity = payload.equity
+    # Secret Key 驗證
+    if payload.secret != WEBHOOK_SECRET:
+        return {"status": "blocked", "reason": "invalid secret", "strategy_id": sid}
 
-        if sid not in strategy_status:
-            strategy_status[sid] = {
-                "max_equity": equity,
-                "last_equity": equity,
-                "paused": False
-            }
+    # 處理 equity 更新
+    if payload.signal_type == "equity_update":
+        eq = float(payload.equity)
+        max_eq = max_equity.get(sid, 0)
 
-        strategy_status[sid]["max_equity"] = max(strategy_status[sid]["max_equity"], equity)
-        strategy_status[sid]["last_equity"] = equity
+        if eq > max_eq:
+            max_equity[sid] = eq
+            strategy_status[sid] = {"paused": False}
+            return {"status": "ok", "strategy_id": sid, "drawdown": 0.0}
 
-        max_eq = strategy_status[sid]["max_equity"]
-        dd = (max_eq - equity) / max_eq * 100
+        dd = (1 - eq / max_eq) * 100 if max_eq > 0 else 0
+        if dd >= MAX_DRAWDOWN_PERCENT:
+            strategy_status[sid] = {"paused": True}
+            return {"status": "paused", "reason": "MDD exceeded", "strategy_id": sid, "drawdown": round(dd, 2)}
 
-        if dd >= MDD_LIMIT:
-            strategy_status[sid]["paused"] = True
-            return {
-                "status": "paused",
-                "reason": "MDD exceeded",
-                "strategy_id": sid,
-                "drawdown": round(dd, 2)
-            }
+        return {"status": "ok", "strategy_id": sid, "drawdown": round(dd, 2)}
 
-        return {
-            "status": "ok",
-            "strategy_id": sid,
-            "drawdown": round(dd, 2)
-        }
+    # 處理 reset
+    if payload.signal_type == "reset":
+        strategy_status[sid] = {"paused": False}
+        return {"status": "reset", "strategy_id": sid}
 
-    # === 若已達停單狀態，則阻擋下單 ===
+    # 如果已經停單則不處理
     if strategy_status.get(sid, {}).get("paused", False):
-        print(f"[MDD STOP] 拒絕下單：{sid} 已觸發停單保護")
         return {"status": "blocked", "reason": "MDD stop active", "strategy_id": sid}
 
-    # === 處理下單 webhook ===
-    if payload.data:
+    # 處理進場下單
+    if payload.signal_type in ["entry_long", "entry_short"] and payload.data:
         action = payload.data.action
         size = float(payload.data.position_size or 0)
         symbol = payload.symbol
         order_type = payload.order_type
 
-        print(f"[Webhook] 接收到訊號：{order_type} | {action} | {symbol} | size={size}")
-
         if size == 0:
-            print("⚠️ 倉量為 0，忽略下單請求")
             return {"status": "ok", "message": "倉量為 0 不處理"}
 
         side = "Buy" if action == "buy" else "Sell"
         result = await place_order(symbol, side, size)
-        print(f"[Webhook] 完成下單：{result}")
-
         return {"status": "success", "bybit_response": result}
 
     return {"status": "ignored", "message": "無法處理的 webhook"}
+
+# === 查詢目前策略狀態 ===
+@app.get("/status")
+async def get_status(strategy_id: str):
+    max_eq = max_equity.get(strategy_id, 0)
+    paused = strategy_status.get(strategy_id, {}).get("paused", False)
+    return {
+        "strategy_id": strategy_id,
+        "max_equity": max_eq,
+        "paused": paused
+    }
