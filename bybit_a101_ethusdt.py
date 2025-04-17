@@ -208,7 +208,16 @@ async def show_logs_dashboard(request: Request):
         for r in raw_data
     ]
 
+    seen_ids = set()
+    unique_strategy_ids = []
+    for r in simplified_data:
+        sid = r["strategy_id"]
+        if sid not in seen_ids:
+            seen_ids.add(sid)
+            unique_strategy_ids.append(sid)
+
     return templates.TemplateResponse("logs_dashboard.html", {
         "request": request,
-        "records": simplified_data
+        "records": simplified_data,
+        "strategy_ids": unique_strategy_ids
     })
