@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from typing import Optional
 import httpx
 import os
 import time
@@ -15,17 +17,17 @@ app = FastAPI()
 
 # === Webhook 資料結構定義 ===
 class WebhookPayloadData(BaseModel):
-    action: str = None
-    position_size: float = 0
+    action: Optional[str] = None
+    position_size: Optional[float] = 0
 
 class WebhookPayload(BaseModel):
     strategy_id: str
     signal_type: str
-    equity: float = None
-    symbol: str = None
-    order_type: str = None
-    data: WebhookPayloadData = None
-    secret: str = None
+    equity: Optional[float] = None
+    symbol: Optional[str] = None
+    order_type: Optional[str] = None
+    data: Optional[WebhookPayloadData] = None
+    secret: Optional[str] = None
 
 # === MDD 停單邏輯 ===
 MAX_DRAWDOWN_PERCENT = float(os.getenv("MAX_DRAWDOWN", 10))
@@ -36,7 +38,6 @@ strategy_status = {}
 log_path_csv = "log/log.csv"
 log_path_json = "log/log.json"
 
-# === 初始化 log 資料夾與檔案 ===
 os.makedirs("log", exist_ok=True)
 if not os.path.exists(log_path_csv):
     with open(log_path_csv, mode="w", newline="") as f:
@@ -46,22 +47,19 @@ if not os.path.exists(log_path_json):
     with open(log_path_json, mode="w") as f:
         json.dump([], f)
 
-# === Google Sheets Logging 初始化（含錯誤追蹤印出）===
+# === Google Sheets Logging 初始化 ===
 SHEET_URL = os.getenv("GOOGLE_SHEET_URL")
-
 creds = None
 gs_client = None
 sheet = None
 
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_file("/etc/secrets/bybit-webhook-a203-logs-7a34c85019dd.json", scopes=scope)
+    creds = Credentials.from_service_account_file("bybit-webhook-a203-logs-7a34c85019dd.json", scopes=scope)
     gs_client = gspread.authorize(creds)
     sheet = gs_client.open_by_url(SHEET_URL).worksheet("bybit_webhook logs")
 except Exception as e:
-    import traceback
-    print("[⚠️ Google Sheets 初始化失敗]：")
-    traceback.print_exc()
+    print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
 
 # === 寫入 log 函數 ===
 def log_event(strategy_id, event, equity=None, drawdown=None, order_action=None):
@@ -130,12 +128,10 @@ async def place_order(symbol: str, side: str, qty: float):
 async def webhook_handler(payload: WebhookPayload):
     sid = payload.strategy_id
 
-    # Secret Key 驗證
     if payload.secret != WEBHOOK_SECRET:
         log_event(sid, "invalid_secret")
         return {"status": "blocked", "reason": "invalid secret", "strategy_id": sid}
 
-    # 處理 equity 更新
     if payload.signal_type == "equity_update":
         eq = float(payload.equity)
         max_eq = max_equity.get(sid, 0)
@@ -155,18 +151,15 @@ async def webhook_handler(payload: WebhookPayload):
         log_event(sid, "equity_update", equity=eq, drawdown=round(dd, 2))
         return {"status": "ok", "strategy_id": sid, "drawdown": round(dd, 2)}
 
-    # 處理 reset
     if payload.signal_type == "reset":
         strategy_status[sid] = {"paused": False}
         log_event(sid, "reset")
         return {"status": "reset", "strategy_id": sid}
 
-    # 如果已經停單則不處理
     if strategy_status.get(sid, {}).get("paused", False):
         log_event(sid, "blocked_send")
         return {"status": "blocked", "reason": "MDD stop active", "strategy_id": sid}
 
-    # 處理進場下單
     if payload.signal_type in ["entry_long", "entry_short"] and payload.data:
         action = payload.data.action
         size = float(payload.data.position_size or 0)
@@ -196,23 +189,40 @@ async def get_status(strategy_id: str):
         "paused": paused
     }
 
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from jinja2 import Template
+# === 查詢 log.json 介面 ===
+@app.get("/logs")
+async def get_logs(
+    strategy_id: Optional[str] = None,
+    event: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    max_mdd: Optional[float] = None,
+    sort: Optional[str] = "desc"
+):
+    try:
+        with open("log/log.json", "r") as f:
+            data = json.load(f)
 
-# 掛載靜態資料夾（給前端用）
-app.mount("/static", StaticFiles(directory="log", html=True), name="static")
+        filtered = []
+        for row in data:
+            if strategy_id and row["strategy_id"] != strategy_id:
+                continue
+            if event and row["event"] != event:
+                continue
+            if start and row["timestamp"] < start:
+                continue
+            if end and row["timestamp"] > end:
+                continue
+            if max_mdd is not None and row.get("drawdown") not in [None, ""]:
+                try:
+                    if float(row["drawdown"]) > max_mdd:
+                        continue
+                except:
+                    pass
+            filtered.append(row)
 
-# Logs 美化頁面路由
-@app.get("/logs", response_class=HTMLResponse)
-async def display_logs():
-    if not os.path.exists("log/log.json"):
-        return "尚無紀錄"
+        filtered.sort(key=lambda x: x["timestamp"], reverse=(sort != "asc"))
+        return JSONResponse(content=filtered)
 
-    with open("log/log.json", "r") as f:
-        log_data = json.load(f)
-
-    with open("log/logs_dashboard.html", "r", encoding="utf-8") as f:
-        template = Template(f.read())
-
-    return template.render(records=log_data)
+    except Exception as e:
+        return {"error": str(e)}
