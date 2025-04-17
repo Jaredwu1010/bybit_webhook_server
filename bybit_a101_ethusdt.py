@@ -55,7 +55,7 @@ sheet = None
 
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_file("bybit-webhook-a203-logs-7a34c85019dd.json", scopes=scope)
+    creds = Credentials.from_service_account_file("/etc/secrets/bybit-webhook-a203-logs-7a34c85019dd.json", scopes=scope)
     gs_client = gspread.authorize(creds)
     sheet = gs_client.open_by_url(SHEET_URL).worksheet("bybit_webhook logs")
 except Exception as e:
