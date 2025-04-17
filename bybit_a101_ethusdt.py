@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import httpx
@@ -14,8 +14,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 app = FastAPI()
+templates = Jinja2Templates(directory="templates")
 
-# === Webhook 資料結構定義 ===
 class WebhookPayloadData(BaseModel):
     action: str = None
     position_size: float = 0
@@ -29,7 +29,6 @@ class WebhookPayload(BaseModel):
     data: WebhookPayloadData = None
     secret: str = None
 
-# === MDD 停單邏輯 ===
 MAX_DRAWDOWN_PERCENT = float(os.getenv("MAX_DRAWDOWN", 10))
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "abc123xyz")
 
@@ -38,7 +37,6 @@ strategy_status = {}
 log_path_csv = "log/log.csv"
 log_path_json = "log/log.json"
 
-# === 初始化 log 資料夾與檔案 ===
 os.makedirs("log", exist_ok=True)
 if not os.path.exists(log_path_csv):
     with open(log_path_csv, mode="w", newline="") as f:
@@ -48,7 +46,6 @@ if not os.path.exists(log_path_json):
     with open(log_path_json, mode="w") as f:
         json.dump([], f)
 
-# === Google Sheets Logging 初始化 ===
 SHEET_URL = os.getenv("GOOGLE_SHEET_URL")
 
 creds = None
@@ -63,7 +60,6 @@ try:
 except Exception as e:
     print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
 
-# === 寫入 log 函數 ===
 def log_event(strategy_id, event, equity=None, drawdown=None, order_action=None):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     row = [timestamp, strategy_id, event, equity, drawdown, order_action]
@@ -91,7 +87,6 @@ def log_event(strategy_id, event, equity=None, drawdown=None, order_action=None)
     except Exception as e:
         print(f"[⚠️ Google Sheets 寫入失敗]：{e}")
 
-# === Bybit 下單函數 ===
 async def place_order(symbol: str, side: str, qty: float):
     api_key = os.environ['BYBIT_API_KEY']
     api_secret = os.environ['BYBIT_API_SECRET']
@@ -125,7 +120,6 @@ async def place_order(symbol: str, side: str, qty: float):
         response = await client.post(endpoint, headers=headers, data=payload_str)
         return response.json()
 
-# === Webhook 接收主邏輯 ===
 @app.post("/webhook")
 async def webhook_handler(payload: WebhookPayload):
     sid = payload.strategy_id
@@ -179,7 +173,6 @@ async def webhook_handler(payload: WebhookPayload):
     log_event(sid, "unrecognized")
     return {"status": "ignored", "message": "無法處理的 webhook"}
 
-# === 查詢目前策略狀態 ===
 @app.get("/status")
 async def get_status(strategy_id: str):
     max_eq = max_equity.get(strategy_id, 0)
@@ -190,11 +183,21 @@ async def get_status(strategy_id: str):
         "paused": paused
     }
 
-# === logs 視覺化 UI ===
-templates = Jinja2Templates(directory="templates")
-
 @app.get("/logs_dashboard", response_class=HTMLResponse)
 async def show_logs_dashboard(request: Request):
     with open(log_path_json, "r") as f:
         records = json.load(f)
-    return templates.TemplateResponse("logs_dashboard.html", {"request": request, "records": records})
+
+    unique_records = []
+    seen_ids = set()
+    for row in reversed(records):
+        cleaned_id = row["strategy_id"].split("_")[0]
+        if cleaned_id not in seen_ids:
+            seen_ids.add(cleaned_id)
+            unique_records.append(row)
+
+    return templates.TemplateResponse("logs_dashboard.html", {"request": request, "records": unique_records})
+
+@app.get("/download/log_json")
+async def download_log_json():
+    return FileResponse(path=log_path_json, media_type="application/json", filename="log.json")
