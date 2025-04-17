@@ -6,6 +6,10 @@ import time
 import hmac
 import hashlib
 import json
+import csv
+from datetime import datetime
+import gspread
+from google.oauth2.service_account import Credentials
 
 app = FastAPI()
 
@@ -29,6 +33,61 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "abc123xyz")
 
 max_equity = {}
 strategy_status = {}
+log_path_csv = "log/log.csv"
+log_path_json = "log/log.json"
+
+# === 初始化 log 資料夾與檔案 ===
+os.makedirs("log", exist_ok=True)
+if not os.path.exists(log_path_csv):
+    with open(log_path_csv, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["timestamp", "strategy_id", "event", "equity", "drawdown", "order_action"])
+if not os.path.exists(log_path_json):
+    with open(log_path_json, mode="w") as f:
+        json.dump([], f)
+
+# === Google Sheets Logging 初始化 ===
+SHEET_URL = os.getenv("GOOGLE_SHEET_URL")
+
+creds = None
+gs_client = None
+sheet = None
+
+try:
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_file("bybit-webhook-a203-logs-7a34c85019dd.json", scopes=scope)
+    gs_client = gspread.authorize(creds)
+    sheet = gs_client.open_by_url(SHEET_URL).worksheet("bybit_webhook logs")
+except Exception as e:
+    print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
+
+# === 寫入 log 函數 ===
+def log_event(strategy_id, event, equity=None, drawdown=None, order_action=None):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row = [timestamp, strategy_id, event, equity, drawdown, order_action]
+
+    with open(log_path_csv, mode="a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(row)
+
+    with open(log_path_json, mode="r+") as f:
+        data = json.load(f)
+        data.append({
+            "timestamp": timestamp,
+            "strategy_id": strategy_id,
+            "event": event,
+            "equity": equity,
+            "drawdown": drawdown,
+            "order_action": order_action
+        })
+        f.seek(0)
+        json.dump(data, f, indent=2)
+
+    try:
+        if sheet:
+            sheet.append_row(row)
+    except Exception as e:
+        print(f"[⚠️ Google Sheets 寫入失敗]：{e}")
 
 # === Bybit 下單函數 ===
 async def place_order(symbol: str, side: str, qty: float):
@@ -71,6 +130,7 @@ async def webhook_handler(payload: WebhookPayload):
 
     # Secret Key 驗證
     if payload.secret != WEBHOOK_SECRET:
+        log_event(sid, "invalid_secret")
         return {"status": "blocked", "reason": "invalid secret", "strategy_id": sid}
 
     # 處理 equity 更新
@@ -81,22 +141,27 @@ async def webhook_handler(payload: WebhookPayload):
         if eq > max_eq:
             max_equity[sid] = eq
             strategy_status[sid] = {"paused": False}
+            log_event(sid, "equity_update", equity=eq, drawdown=0.0)
             return {"status": "ok", "strategy_id": sid, "drawdown": 0.0}
 
         dd = (1 - eq / max_eq) * 100 if max_eq > 0 else 0
         if dd >= MAX_DRAWDOWN_PERCENT:
             strategy_status[sid] = {"paused": True}
+            log_event(sid, "paused_by_mdd", equity=eq, drawdown=round(dd, 2))
             return {"status": "paused", "reason": "MDD exceeded", "strategy_id": sid, "drawdown": round(dd, 2)}
 
+        log_event(sid, "equity_update", equity=eq, drawdown=round(dd, 2))
         return {"status": "ok", "strategy_id": sid, "drawdown": round(dd, 2)}
 
     # 處理 reset
     if payload.signal_type == "reset":
         strategy_status[sid] = {"paused": False}
+        log_event(sid, "reset")
         return {"status": "reset", "strategy_id": sid}
 
     # 如果已經停單則不處理
     if strategy_status.get(sid, {}).get("paused", False):
+        log_event(sid, "blocked_send")
         return {"status": "blocked", "reason": "MDD stop active", "strategy_id": sid}
 
     # 處理進場下單
@@ -107,12 +172,15 @@ async def webhook_handler(payload: WebhookPayload):
         order_type = payload.order_type
 
         if size == 0:
+            log_event(sid, "skip_zero_order")
             return {"status": "ok", "message": "倉量為 0 不處理"}
 
         side = "Buy" if action == "buy" else "Sell"
         result = await place_order(symbol, side, size)
+        log_event(sid, "order_sent", order_action=action)
         return {"status": "success", "bybit_response": result}
 
+    log_event(sid, "unrecognized")
     return {"status": "ignored", "message": "無法處理的 webhook"}
 
 # === 查詢目前策略狀態 ===
