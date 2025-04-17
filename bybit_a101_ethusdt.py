@@ -1,7 +1,6 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from typing import Optional
 import httpx
 import os
 import time
@@ -17,17 +16,17 @@ app = FastAPI()
 
 # === Webhook 資料結構定義 ===
 class WebhookPayloadData(BaseModel):
-    action: Optional[str] = None
-    position_size: Optional[float] = 0
+    action: str = None
+    position_size: float = 0
 
 class WebhookPayload(BaseModel):
     strategy_id: str
     signal_type: str
-    equity: Optional[float] = None
-    symbol: Optional[str] = None
-    order_type: Optional[str] = None
-    data: Optional[WebhookPayloadData] = None
-    secret: Optional[str] = None
+    equity: float = None
+    symbol: str = None
+    order_type: str = None
+    data: WebhookPayloadData = None
+    secret: str = None
 
 # === MDD 停單邏輯 ===
 MAX_DRAWDOWN_PERCENT = float(os.getenv("MAX_DRAWDOWN", 10))
@@ -38,6 +37,7 @@ strategy_status = {}
 log_path_csv = "log/log.csv"
 log_path_json = "log/log.json"
 
+# === 初始化 log 資料夾與檔案 ===
 os.makedirs("log", exist_ok=True)
 if not os.path.exists(log_path_csv):
     with open(log_path_csv, mode="w", newline="") as f:
@@ -49,6 +49,7 @@ if not os.path.exists(log_path_json):
 
 # === Google Sheets Logging 初始化 ===
 SHEET_URL = os.getenv("GOOGLE_SHEET_URL")
+
 creds = None
 gs_client = None
 sheet = None
@@ -135,7 +136,6 @@ async def webhook_handler(payload: WebhookPayload):
     if payload.signal_type == "equity_update":
         eq = float(payload.equity)
         max_eq = max_equity.get(sid, 0)
-
         if eq > max_eq:
             max_equity[sid] = eq
             strategy_status[sid] = {"paused": False}
@@ -189,54 +189,53 @@ async def get_status(strategy_id: str):
         "paused": paused
     }
 
-# === 查詢 log.json 介面 ===
-@app.get("/logs")
-async def get_logs(
-    strategy_id: Optional[str] = None,
-    event: Optional[str] = None,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    max_mdd: Optional[float] = None,
-    sort: Optional[str] = "desc"
-):
+# === 美化版 logs dashboard 頁面 ===
+@app.get("/logs_dashboard", response_class=HTMLResponse)
+async def logs_dashboard():
     try:
         with open("log/log.json", "r") as f:
-            data = json.load(f)
+            raw_data = json.load(f)
 
-        filtered = []
-        for row in data:
-            if strategy_id and row["strategy_id"] != strategy_id:
-                continue
-            if event and row["event"] != event:
-                continue
-            if start and row["timestamp"] < start:
-                continue
-            if end and row["timestamp"] > end:
-                continue
-            if max_mdd is not None and row.get("drawdown") not in [None, ""]:
-                try:
-                    if float(row["drawdown"]) > max_mdd:
-                        continue
-                except:
-                    pass
-            filtered.append(row)
+        rows = ""
+        for row in reversed(raw_data):
+            rows += f"""
+            <tr class='border-b'>
+              <td class='p-2 border'>{row.get("timestamp", "")}</td>
+              <td class='p-2 border'>{row.get("strategy_id", "")}</td>
+              <td class='p-2 border'>{row.get("event", "")}</td>
+              <td class='p-2 border'>{row.get("equity", "")}</td>
+              <td class='p-2 border'>{row.get("drawdown", "")}</td>
+              <td class='p-2 border'>{row.get("order_action", "")}</td>
+            </tr>"""
 
-        filtered.sort(key=lambda x: x["timestamp"], reverse=(sort != "asc"))
-        return JSONResponse(content=filtered)
-
+        html = f"""
+        <!DOCTYPE html>
+        <html lang='zh'>
+        <head>
+          <meta charset='UTF-8'>
+          <title>Webhook Logs Dashboard</title>
+          <script src='https://cdn.tailwindcss.com'></script>
+        </head>
+        <body class='bg-gray-100 text-gray-800 p-6'>
+          <h1 class='text-2xl font-bold mb-4'>📊 Webhook Logs Dashboard</h1>
+          <div class='overflow-auto rounded-xl shadow-lg border bg-white p-4'>
+            <table class='min-w-full table-auto border-collapse text-sm'>
+              <thead>
+                <tr class='bg-gray-200'>
+                  <th class='p-2 border'>時間</th>
+                  <th class='p-2 border'>策略 ID</th>
+                  <th class='p-2 border'>事件</th>
+                  <th class='p-2 border'>Equity</th>
+                  <th class='p-2 border'>Drawdown</th>
+                  <th class='p-2 border'>下單動作</th>
+                </tr>
+              </thead>
+              <tbody>{rows}</tbody>
+            </table>
+          </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
     except Exception as e:
-        return {"error": str(e)}
-
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-
-templates = Jinja2Templates(directory="templates")
-
-@app.get("/logs_dashboard", response_class=HTMLResponse)
-async def logs_dashboard(request: Request):
-    try:
-        with open(log_path_json, "r") as f:
-            records = json.load(f)
-    except:
-        records = []
-    return templates.TemplateResponse("logs_dashboard.html", {"request": request, "records": records})
+        return HTMLResponse(content=f"<h1>⚠️ Failed to load logs: {e}</h1>")
