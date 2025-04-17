@@ -34,7 +34,7 @@ class WebhookPayload(BaseModel):
 
 # === MDD 停單邏輯 ===
 MAX_DRAWDOWN_PERCENT = float(os.getenv("MAX_DRAWDOWN", 10))
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "abc123xyz")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")  # ✅ 使用動態變數，避免硬編碼
 
 max_equity = {}
 strategy_status = {}
