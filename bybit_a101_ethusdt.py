@@ -34,7 +34,7 @@ class WebhookPayload(BaseModel):
 
 # === MDD 停單邏輯 ===
 MAX_DRAWDOWN_PERCENT = float(os.getenv("MAX_DRAWDOWN", 10))
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")  # ✅ 使用動態變數，避免硬編碼
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")  # ✅ 使用動態變數
 
 max_equity = {}
 strategy_status = {}
@@ -92,7 +92,106 @@ def log_event(strategy_id, event, equity=None, drawdown=None, order_action=None)
     except Exception as e:
         print(f"[⚠️ Google Sheets 寫入失敗]：{e}")
 
-# === Web Dashboard Route ===
+# === Bybit 下單函數 ===
+async def place_order(symbol: str, side: str, qty: float):
+    api_key = os.environ['BYBIT_API_KEY']
+    api_secret = os.environ['BYBIT_API_SECRET']
+    base_url = os.environ['BYBIT_API_URL']
+    endpoint = f"{base_url}/v5/order/create"
+
+    timestamp = str(int(time.time() * 1000))
+    recv_window = "50000"
+    payload = {
+        "category": "linear",
+        "symbol": symbol,
+        "side": side,
+        "orderType": "Market",
+        "qty": str(qty),
+        "timeInForce": "IOC"
+    }
+
+    payload_str = json.dumps(payload, separators=(",", ":"))
+    sign_str = timestamp + api_key + recv_window + payload_str
+    signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+
+    headers = {
+        "X-BAPI-API-KEY": api_key,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": recv_window,
+        "X-BAPI-SIGN": signature,
+        "Content-Type": "application/json"
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(endpoint, headers=headers, data=payload_str)
+        return response.json()
+
+# === Webhook 接收主邏輯 ===
+@app.post("/webhook")
+async def webhook_handler(payload: WebhookPayload):
+    sid = payload.strategy_id
+
+    if payload.secret != WEBHOOK_SECRET:
+        log_event(sid, "invalid_secret")
+        return {"status": "blocked", "reason": "invalid secret", "strategy_id": sid}
+
+    if payload.signal_type == "equity_update":
+        eq = float(payload.equity)
+        max_eq = max_equity.get(sid, 0)
+        if eq > max_eq:
+            max_equity[sid] = eq
+            strategy_status[sid] = {"paused": False}
+            log_event(sid, "equity_update", equity=eq, drawdown=0.0)
+            return {"status": "ok", "strategy_id": sid, "drawdown": 0.0}
+
+        dd = (1 - eq / max_eq) * 100 if max_eq > 0 else 0
+        if dd >= MAX_DRAWDOWN_PERCENT:
+            strategy_status[sid] = {"paused": True}
+            log_event(sid, "paused_by_mdd", equity=eq, drawdown=round(dd, 2))
+            return {"status": "paused", "reason": "MDD exceeded", "strategy_id": sid, "drawdown": round(dd, 2)}
+
+        log_event(sid, "equity_update", equity=eq, drawdown=round(dd, 2))
+        return {"status": "ok", "strategy_id": sid, "drawdown": round(dd, 2)}
+
+    if payload.signal_type == "reset":
+        strategy_status[sid] = {"paused": False}
+        log_event(sid, "reset")
+        return {"status": "reset", "strategy_id": sid}
+
+    if strategy_status.get(sid, {}).get("paused", False):
+        log_event(sid, "blocked_send")
+        return {"status": "blocked", "reason": "MDD stop active", "strategy_id": sid}
+
+    if payload.signal_type in ["entry_long", "entry_short"] and payload.data:
+        action = payload.data.action
+        size = float(payload.data.position_size or 0)
+        symbol = payload.symbol
+        order_type = payload.order_type
+
+        if size == 0:
+            log_event(sid, "skip_zero_order")
+            return {"status": "ok", "message": "倉量為 0 不處理"}
+
+        side = "Buy" if action == "buy" else "Sell"
+        result = await place_order(symbol, side, size)
+        log_event(sid, "order_sent", order_action=action)
+        return {"status": "success", "bybit_response": result}
+
+    log_event(sid, "unrecognized")
+    return {"status": "ignored", "message": "無法處理的 webhook"}
+
+# === 查詢目前策略狀態 ===
+@app.get("/status")
+async def get_status(strategy_id: str):
+    max_eq = max_equity.get(strategy_id, 0)
+    paused = strategy_status.get(strategy_id, {}).get("paused", False)
+    return {
+        "strategy_id": strategy_id,
+        "max_equity": max_eq,
+        "paused": paused
+    }
+
+# === 美化版 logs dashboard 頁面 ===
 @app.get("/logs_dashboard", response_class=HTMLResponse)
 async def show_logs_dashboard(request: Request):
     with open(log_path_json, "r") as f:
