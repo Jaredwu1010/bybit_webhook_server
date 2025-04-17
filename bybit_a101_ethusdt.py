@@ -208,16 +208,11 @@ async def show_logs_dashboard(request: Request):
         for r in raw_data
     ]
 
-    seen_ids = set()
-    unique_strategy_ids = []
-    for r in simplified_data:
-        sid = r["strategy_id"]
-        if sid not in seen_ids:
-            seen_ids.add(sid)
-            unique_strategy_ids.append(sid)
+    # 只保留唯一的策略 ID 顯示在選單中
+    unique_ids = list({r["strategy_id"] for r in simplified_data})
 
     return templates.TemplateResponse("logs_dashboard.html", {
         "request": request,
         "records": simplified_data,
-        "strategy_ids": unique_strategy_ids
+        "strategy_ids": unique_ids
     })
