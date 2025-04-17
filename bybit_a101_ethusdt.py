@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import httpx
 import os
@@ -189,53 +190,11 @@ async def get_status(strategy_id: str):
         "paused": paused
     }
 
-# === 美化版 logs dashboard 頁面 ===
+# === logs 視覺化 UI ===
+templates = Jinja2Templates(directory="templates")
+
 @app.get("/logs_dashboard", response_class=HTMLResponse)
-async def logs_dashboard():
-    try:
-        with open("log/log.json", "r") as f:
-            raw_data = json.load(f)
-
-        rows = ""
-        for row in reversed(raw_data):
-            rows += f"""
-            <tr class='border-b'>
-              <td class='p-2 border'>{row.get("timestamp", "")}</td>
-              <td class='p-2 border'>{row.get("strategy_id", "")}</td>
-              <td class='p-2 border'>{row.get("event", "")}</td>
-              <td class='p-2 border'>{row.get("equity", "")}</td>
-              <td class='p-2 border'>{row.get("drawdown", "")}</td>
-              <td class='p-2 border'>{row.get("order_action", "")}</td>
-            </tr>"""
-
-        html = f"""
-        <!DOCTYPE html>
-        <html lang='zh'>
-        <head>
-          <meta charset='UTF-8'>
-          <title>Webhook Logs Dashboard</title>
-          <script src='https://cdn.tailwindcss.com'></script>
-        </head>
-        <body class='bg-gray-100 text-gray-800 p-6'>
-          <h1 class='text-2xl font-bold mb-4'>📊 Webhook Logs Dashboard</h1>
-          <div class='overflow-auto rounded-xl shadow-lg border bg-white p-4'>
-            <table class='min-w-full table-auto border-collapse text-sm'>
-              <thead>
-                <tr class='bg-gray-200'>
-                  <th class='p-2 border'>時間</th>
-                  <th class='p-2 border'>策略 ID</th>
-                  <th class='p-2 border'>事件</th>
-                  <th class='p-2 border'>Equity</th>
-                  <th class='p-2 border'>Drawdown</th>
-                  <th class='p-2 border'>下單動作</th>
-                </tr>
-              </thead>
-              <tbody>{rows}</tbody>
-            </table>
-          </div>
-        </body>
-        </html>
-        """
-        return HTMLResponse(content=html)
-    except Exception as e:
-        return HTMLResponse(content=f"<h1>⚠️ Failed to load logs: {e}</h1>")
+async def show_logs_dashboard(request: Request):
+    with open(log_path_json, "r") as f:
+        records = json.load(f)
+    return templates.TemplateResponse("logs_dashboard.html", {"request": request, "records": records})
