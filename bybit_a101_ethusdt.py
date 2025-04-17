@@ -195,3 +195,24 @@ async def get_status(strategy_id: str):
         "max_equity": max_eq,
         "paused": paused
     }
+
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from jinja2 import Template
+
+# 掛載靜態資料夾（給前端用）
+app.mount("/static", StaticFiles(directory="log", html=True), name="static")
+
+# Logs 美化頁面路由
+@app.get("/logs", response_class=HTMLResponse)
+async def display_logs():
+    if not os.path.exists("log/log.json"):
+        return "尚無紀錄"
+
+    with open("log/log.json", "r") as f:
+        log_data = json.load(f)
+
+    with open("log/logs_dashboard.html", "r", encoding="utf-8") as f:
+        template = Template(f.read())
+
+    return template.render(records=log_data)
