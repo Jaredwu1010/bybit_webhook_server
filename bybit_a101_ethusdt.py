@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import httpx
@@ -191,7 +191,7 @@ async def get_status(strategy_id: str):
         "paused": paused
     }
 
-# === 美化版 logs dashboard 頁面 ===
+# === logs dashboard 頁面 ===
 @app.get("/logs_dashboard", response_class=HTMLResponse)
 async def show_logs_dashboard(request: Request):
     with open(log_path_json, "r") as f:
@@ -208,11 +208,21 @@ async def show_logs_dashboard(request: Request):
         for r in raw_data
     ]
 
-    # 只保留唯一的策略 ID 顯示在選單中
-    unique_ids = list({r["strategy_id"] for r in simplified_data})
+    seen = set()
+    unique_ids = []
+    for item in simplified_data:
+        sid = item["strategy_id"]
+        if sid not in seen:
+            unique_ids.append(sid)
+            seen.add(sid)
 
     return templates.TemplateResponse("logs_dashboard.html", {
         "request": request,
         "records": simplified_data,
         "strategy_ids": unique_ids
     })
+
+# === 下載 log.json API ===
+@app.get("/download/log.json")
+async def download_log_file():
+    return FileResponse(log_path_json, media_type="application/json", filename="log.json")
