@@ -1,1 +1,37 @@
-  
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>Webhook Logs Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 text-gray-800 p-6">
+  <h1 class="text-2xl font-bold mb-4">📊 Webhook Logs Dashboard</h1>
+  <div class="overflow-auto rounded-xl shadow-lg border bg-white p-4">
+    <table class="min-w-full table-auto border-collapse text-sm">
+      <thead>
+        <tr class="bg-gray-200">
+          <th class="p-2 border">時間</th>
+          <th class="p-2 border">策略 ID</th>
+          <th class="p-2 border">事件</th>
+          <th class="p-2 border">Equity</th>
+          <th class="p-2 border">Drawdown</th>
+          <th class="p-2 border">下單動作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in records %}
+        <tr class="border-b">
+          <td class="p-2 border">{{ row.timestamp }}</td>
+          <td class="p-2 border">{{ row.strategy_id }}</td>
+          <td class="p-2 border">{{ row.event }}</td>
+          <td class="p-2 border">{{ row.equity or '' }}</td>
+          <td class="p-2 border">{{ row.drawdown or '' }}</td>
+          <td class="p-2 border">{{ row.order_action or '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>  
