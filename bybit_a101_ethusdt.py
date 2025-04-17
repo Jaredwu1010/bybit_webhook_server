@@ -46,7 +46,7 @@ if not os.path.exists(log_path_json):
     with open(log_path_json, mode="w") as f:
         json.dump([], f)
 
-# === Google Sheets Logging 初始化 ===
+# === Google Sheets Logging 初始化（含錯誤追蹤印出）===
 SHEET_URL = os.getenv("GOOGLE_SHEET_URL")
 
 creds = None
@@ -59,7 +59,9 @@ try:
     gs_client = gspread.authorize(creds)
     sheet = gs_client.open_by_url(SHEET_URL).worksheet("bybit_webhook logs")
 except Exception as e:
-    print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
+    import traceback
+    print("[⚠️ Google Sheets 初始化失敗]：")
+    traceback.print_exc()
 
 # === 寫入 log 函數 ===
 def log_event(strategy_id, event, equity=None, drawdown=None, order_action=None):
