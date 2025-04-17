@@ -226,3 +226,17 @@ async def get_logs(
 
     except Exception as e:
         return {"error": str(e)}
+
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+
+templates = Jinja2Templates(directory="templates")
+
+@app.get("/logs_dashboard", response_class=HTMLResponse)
+async def logs_dashboard(request: Request):
+    try:
+        with open(log_path_json, "r") as f:
+            records = json.load(f)
+    except:
+        records = []
+    return templates.TemplateResponse("logs_dashboard.html", {"request": request, "records": records})
