@@ -1,157 +1,195 @@
-<!DOCTYPE html>
-<html lang="zh">
-<head>
-  <meta charset="UTF-8">
-  <title>Webhook Logs Dashboard</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-</head>
-<body class="bg-gray-100 text-gray-800 p-6">
-  <h1 class="text-2xl font-bold mb-4">📊 Webhook Logs Dashboard</h1>
+from fastapi import FastAPI, Request, Form
+from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+import httpx
+import os
+import time
+import hmac
+import hashlib
+import json
+import csv
+from datetime import datetime
+import gspread
+from google.oauth2.service_account import Credentials
+import re
+from collections import defaultdict
 
-  <!-- 篩選區 -->
-  <div class="bg-white p-4 rounded-lg shadow-md mb-6 flex flex-wrap gap-4 items-center">
-    <label>
-      策略 ID：
-      <select id="strategySelect" class="ml-2 p-1 border rounded">
-        <option value="">全部</option>
-        {% for row in records %}
-          {% if row.strategy_id %}<option value="{{ row.strategy_id }}">{{ row.strategy_id }}</option>{% endif %}
-        {% endfor %}
-      </select>
-    </label>
-    <label>
-      起始時間：<input type="datetime-local" id="startTime" class="ml-2 p-1 border rounded" />
-    </label>
-    <label>
-      結束時間：<input type="datetime-local" id="endTime" class="ml-2 p-1 border rounded" />
-    </label>
-    <label>
-      MDD ≤ <input type="number" id="maxMdd" class="ml-2 w-20 p-1 border rounded" step="0.01" />%
-    </label>
-    <button onclick="applyFilter()" class="ml-2 bg-blue-500 text-white px-4 py-1 rounded">篩選</button>
-  </div>
+app = FastAPI()
+templates = Jinja2Templates(directory="templates")
 
-  <!-- Reset 控制區 -->
-  <div class="bg-white p-4 rounded-lg shadow-md mb-6 flex gap-4 items-center">
-    <label>
-      密鑰：<input type="password" id="resetSecret" class="ml-2 p-1 border rounded" placeholder="請輸入 secret" />
-    </label>
-    <button onclick="resetStrategy()" class="bg-red-500 text-white px-4 py-1 rounded">🔁 手動 Reset 選中策略</button>
-  </div>
+class WebhookPayloadData(BaseModel):
+    action: str = None
+    position_size: float = 0
 
-  <!-- 圖表區 -->
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-    <div class="bg-white p-4 rounded shadow"><canvas id="strategyChart"></canvas></div>
-    <div class="bg-white p-4 rounded shadow"><canvas id="mddChart"></canvas></div>
-    <div class="bg-white p-4 rounded shadow"><canvas id="dailyChart"></canvas></div>
-  </div>
+class WebhookPayload(BaseModel):
+    strategy_id: str
+    signal_type: str
+    equity: float = None
+    symbol: str = None
+    order_type: str = None
+    data: WebhookPayloadData = None
+    secret: str = None
 
-  <!-- 表格區 -->
-  <div class="overflow-auto rounded-xl shadow-lg border bg-white p-4">
-    <table class="min-w-full table-auto border-collapse text-sm">
-      <thead>
-        <tr class="bg-gray-200">
-          <th class="p-2 border">時間</th>
-          <th class="p-2 border">策略 ID</th>
-          <th class="p-2 border">事件</th>
-          <th class="p-2 border">Equity</th>
-          <th class="p-2 border">Drawdown</th>
-          <th class="p-2 border">下單動作</th>
-        </tr>
-      </thead>
-      <tbody id="logTable">
-        {% for row in records %}
-        <tr class="border-b">
-          <td class="p-2 border">{{ row.timestamp }}</td>
-          <td class="p-2 border">{{ row.strategy_id }}</td>
-          <td class="p-2 border">{{ row.event }}</td>
-          <td class="p-2 border">{{ row.equity or '' }}</td>
-          <td class="p-2 border">{{ row.drawdown or '' }}</td>
-          <td class="p-2 border">{{ row.order_action or '' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+MAX_DRAWDOWN_PERCENT = float(os.getenv("MAX_DRAWDOWN", 10))
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
+LINE_CHANNEL_TOKEN = os.getenv("LINE_CHANNEL_TOKEN")
+LINE_USER_ID = os.getenv("LINE_USER_ID")
 
-<script>
-function applyFilter() {
-  const strategy = document.getElementById("strategySelect").value;
-  const startTime = new Date(document.getElementById("startTime").value);
-  const endTime = new Date(document.getElementById("endTime").value);
-  const maxMdd = parseFloat(document.getElementById("maxMdd").value);
+max_equity = {}
+strategy_status = {}
+log_path_csv = "log/log.csv"
+log_path_json = "log/log.json"
 
-  document.querySelectorAll("#logTable tr").forEach(row => {
-    const cells = row.querySelectorAll("td");
-    if (cells.length < 6) return;
+os.makedirs("log", exist_ok=True)
+if not os.path.exists(log_path_csv):
+    with open(log_path_csv, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["timestamp", "strategy_id", "event", "equity", "drawdown", "order_action"])
+if not os.path.exists(log_path_json):
+    with open(log_path_json, mode="w") as f:
+        json.dump([], f)
 
-    const time = new Date(cells[0].innerText);
-    const id = cells[1].innerText;
-    const mdd = parseFloat(cells[4].innerText) || 0;
+SHEET_URL = os.getenv("GOOGLE_SHEET_URL")
+creds = None
+gs_client = None
+sheet = None
+try:
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_file("bybit-webhook-a203-logs-7a34c85019dd.json", scopes=scope)
+    gs_client = gspread.authorize(creds)
+    sheet = gs_client.open_by_url(SHEET_URL).worksheet("bybit_webhook logs")
+except Exception as e:
+    print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
 
-    let show = true;
-    if (strategy && id !== strategy) show = false;
-    if (!isNaN(startTime) && time < startTime) show = false;
-    if (!isNaN(endTime) && time > endTime) show = false;
-    if (!isNaN(maxMdd) && mdd > maxMdd) show = false;
+async def push_line_message(message: str):
+    if not LINE_CHANNEL_TOKEN or not LINE_USER_ID:
+        print("[❌ 缺少 LINE TOKEN 或 USER ID]", flush=True)
+        return
+    try:
+        headers = {
+            "Authorization": f"Bearer {LINE_CHANNEL_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        body = {
+            "to": LINE_USER_ID,
+            "messages": [{"type": "text", "text": message}]
+        }
+        async with httpx.AsyncClient() as client:
+            resp = await client.post("https://api.line.me/v2/bot/message/push", headers=headers, json=body)
+            print(f"[✅ LINE 發送回應] {resp.status_code} - {resp.text}", flush=True)
+    except Exception as e:
+        print(f"[⚠️ LINE 推播失敗]：{e}", flush=True)
 
-    row.style.display = show ? "" : "none";
-  });
-}
+def log_event(strategy_id, event, equity=None, drawdown=None, order_action=None):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row = [timestamp, strategy_id, event, equity, drawdown, order_action]
 
-function resetStrategy() {
-  const sid = document.getElementById("strategySelect").value;
-  const secret = document.getElementById("resetSecret").value;
-  if (!sid || !secret) return alert("請選擇策略並輸入密鑰");
+    with open(log_path_csv, mode="a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(row)
 
-  fetch(`/webhook`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      strategy_id: sid,
-      signal_type: "reset",
-      secret: secret
+    with open(log_path_json, mode="r+") as f:
+        data = json.load(f)
+        data.append({
+            "timestamp": timestamp,
+            "strategy_id": strategy_id,
+            "event": event,
+            "equity": equity,
+            "drawdown": drawdown,
+            "order_action": order_action
+        })
+        f.seek(0)
+        json.dump(data, f, indent=2)
+
+    try:
+        if sheet:
+            sheet.append_row(row)
+    except Exception as e:
+        print(f"[⚠️ Google Sheets 寫入失敗]：{e}")
+
+@app.post("/webhook")
+async def webhook_handler(payload: WebhookPayload):
+    sid = payload.strategy_id
+
+    if payload.secret != WEBHOOK_SECRET:
+        log_event(sid, "invalid_secret")
+        return {"status": "blocked", "reason": "invalid secret", "strategy_id": sid}
+
+    if payload.signal_type == "equity_update":
+        eq = float(payload.equity)
+        max_eq = max_equity.get(sid, 0)
+        if eq > max_eq:
+            max_equity[sid] = eq
+            strategy_status[sid] = {"paused": False}
+            log_event(sid, "equity_update", equity=eq, drawdown=0.0)
+            return {"status": "ok", "strategy_id": sid, "drawdown": 0.0}
+
+        dd = (1 - eq / max_eq) * 100 if max_eq > 0 else 0
+        if dd >= MAX_DRAWDOWN_PERCENT:
+            strategy_status[sid] = {"paused": True}
+            log_event(sid, "paused_by_mdd", equity=eq, drawdown=round(dd, 2))
+            await push_line_message(f"⚠️ 策略 {sid} 已觸發最大回撤停單，DD = {round(dd, 2)}%")
+            return {"status": "paused", "reason": "MDD exceeded", "strategy_id": sid, "drawdown": round(dd, 2)}
+
+        log_event(sid, "equity_update", equity=eq, drawdown=round(dd, 2))
+        return {"status": "ok", "strategy_id": sid, "drawdown": round(dd, 2)}
+
+    if payload.signal_type == "reset":
+        strategy_status[sid] = {"paused": False}
+        log_event(sid, "reset")
+        return {"status": "reset", "strategy_id": sid}
+
+    if strategy_status.get(sid, {}).get("paused", False):
+        log_event(sid, "blocked_send")
+        return {"status": "blocked", "reason": "MDD stop active", "strategy_id": sid}
+
+    if payload.signal_type in ["entry_long", "entry_short"] and payload.data:
+        action = payload.data.action
+        size = float(payload.data.position_size or 0)
+        symbol = payload.symbol
+        order_type = payload.order_type
+
+        if size == 0:
+            log_event(sid, "skip_zero_order")
+            return {"status": "ok", "message": "倉量為 0 不處理"}
+
+        side = "Buy" if action == "buy" else "Sell"
+        result = {"side": side, "symbol": symbol, "qty": size}  # mock
+        log_event(sid, "order_sent", order_action=action)
+        return {"status": "success", "bybit_response": result}
+
+    log_event(sid, "unrecognized")
+    return {"status": "ignored", "message": "無法處理的 webhook"}
+
+@app.get("/status")
+async def get_status(strategy_id: str):
+    max_eq = max_equity.get(strategy_id, 0)
+    paused = strategy_status.get(strategy_id, {}).get("paused", False)
+    return {
+        "strategy_id": strategy_id,
+        "max_equity": max_eq,
+        "paused": paused
+    }
+
+@app.post("/line_callback")
+async def line_callback(request: Request):
+    return {"status": "ok"}
+
+@app.get("/test_line")
+async def test_line():
+    await push_line_message("📢 測試訊息：LINE 通知測試成功！")
+    return {"status": "sent"}
+
+@app.get("/logs_dashboard", response_class=HTMLResponse)
+async def logs_dashboard(request: Request):
+    if not os.path.exists(log_path_json):
+        return HTMLResponse(content="<h1>尚未產生任何 log.json 記錄</h1>", status_code=404)
+
+    with open(log_path_json, "r") as f:
+        records = json.load(f)
+
+    return templates.TemplateResponse("logs_dashboard.html", {
+        "request": request,
+        "records": records
     })
-  }).then(r => r.json()).then(res => {
-    alert(res.status === "reset" ? `✅ ${sid} 已重置` : `❌ 失敗：${res.reason || res.message}`);
-  });
-}
-
-// 自動生成統計圖表（需搭配後端注入 json_data）
-const raw = {{ records|tojson }};
-const strategyStat = {}, mddStat = {}, dateStat = {};
-raw.forEach(row => {
-  const s = row.strategy_id || "N/A";
-  const d = row.drawdown || 0;
-  const t = row.timestamp.split(" ")[0];
-  strategyStat[s] = (strategyStat[s] || 0) + 1;
-  dateStat[t] = (dateStat[t] || 0) + 1;
-  const bucket = Math.floor(d / 5) * 5;
-  mddStat[bucket] = (mddStat[bucket] || 0) + 1;
-});
-
-new Chart(document.getElementById("strategyChart"), {
-  type: 'bar', data: {
-    labels: Object.keys(strategyStat),
-    datasets: [{ label: '每策略次數', data: Object.values(strategyStat), backgroundColor: '#60a5fa' }]
-  }, options: { responsive: true }
-});
-
-new Chart(document.getElementById("mddChart"), {
-  type: 'bar', data: {
-    labels: Object.keys(mddStat).map(x => `${x}~${+x+4}%`),
-    datasets: [{ label: 'MDD分佈', data: Object.values(mddStat), backgroundColor: '#f87171' }]
-  }, options: { responsive: true }
-});
-
-new Chart(document.getElementById("dailyChart"), {
-  type: 'line', data: {
-    labels: Object.keys(dateStat),
-    datasets: [{ label: '每日事件筆數', data: Object.values(dateStat), backgroundColor: '#34d399', fill: true }]
-  }, options: { responsive: true, tension: 0.3 }
-});
-</script>
-
-</body>
-</html>
