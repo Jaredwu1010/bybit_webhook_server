@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 import httpx
 import os
 import json
@@ -59,6 +60,56 @@ async def push_line_message(msg: str):
     async with httpx.AsyncClient() as client:
         r = await client.post("https://api.line.me/v2/bot/message/push", headers=headers, json=body)
         print("[LINE 回應]", r.status_code, await r.aread())
+
+# === Webhook Payload 定義 ===
+class WebhookPayloadData(BaseModel):
+    action: str
+    position_size: float
+
+class WebhookPayload(BaseModel):
+    strategy_id: str
+    signal_type: str
+    equity: float = None
+    symbol: str = None
+    order_type: str = None
+    data: WebhookPayloadData = None
+    secret: str = None
+
+# === Webhook 主邏輯 ===
+@app.post("/webhook")
+async def webhook_handler(payload: WebhookPayload):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sid = payload.strategy_id
+    event = payload.signal_type
+    equity = payload.equity
+    drawdown = None
+    action = payload.data.action if payload.data else ""
+
+    # === 寫入 log.json ===
+    try:
+        with open(log_json_path, "r+") as f:
+            logs = json.load(f)
+            logs.append({
+                "timestamp": timestamp,
+                "strategy_id": sid,
+                "event": event,
+                "equity": equity,
+                "drawdown": drawdown,
+                "order_action": action
+            })
+            f.seek(0)
+            json.dump(logs, f, indent=2)
+        print(f"[📥 已寫入 log.json] {sid} {event}")
+    except Exception as e:
+        print(f"[⚠️ log.json 寫入失敗]：{e}")
+
+    # === 寫入 Google Sheets ===
+    write_to_gsheet(timestamp, sid, event, equity, drawdown, action)
+
+    # === LINE 通知（選用） ===
+    await push_line_message(f"✅ 策略 {sid} 收到訊號：{event}，動作：{action}")
+
+    return {"status": "ok", "strategy_id": sid}
 
 # === 測試 LINE 是否成功通知 ===
 @app.get("/test_line")
