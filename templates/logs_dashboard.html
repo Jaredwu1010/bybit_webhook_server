@@ -2,25 +2,37 @@
 <html lang="zh">
 <head>
   <meta charset="UTF-8" />
-  <title>Webhook Logs Dashboard</title>
+  <title>📊 Webhook Logs Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 p-6">
-  <h1 class="text-2xl font-bold mb-6">📊 Webhook Logs Dashboard</h1>
+  <h1 class="text-2xl font-bold mb-4">📊 Webhook Logs Dashboard</h1>
 
-  <!-- Reset 選單 -->
-  <form method="post" action="/manual_reset" class="mb-4 bg-white p-4 rounded shadow">
-    <label class="block mb-2 font-semibold">🛠️ 手動 Reset 策略</label>
-    <select name="strategy_id" class="border p-2 rounded w-1/2">
-      {% for row in records|map(attribute="strategy_id")|unique %}
-      <option value="{{ row }}">{{ row.split('_')[0] }}</option>
-      {% endfor %}
-    </select>
-    <input type="password" name="secret" placeholder="輸入密碼" class="border p-2 rounded ml-2" required />
-    <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded ml-2">Reset</button>
-  </form>
+  <div class="mb-6">
+    <a href="/download/log.json" class="bg-blue-600 hover:bg-blue-700 text-white py-1 px-4 rounded">
+      下載 log.json
+    </a>
+  </div>
 
-  <!-- Log 表格 -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+    <div class="bg-white p-4 rounded shadow border">
+      <h2 class="text-lg font-semibold mb-2">📉 策略績效曲線</h2>
+      <img src="/static/equity_curve.png" alt="Equity Curve" />
+    </div>
+    <div class="bg-white p-4 rounded shadow border">
+      <h2 class="text-lg font-semibold mb-2">📈 MDD 分佈</h2>
+      <img src="/static/mdd_distribution.png" alt="MDD 分佈" />
+    </div>
+    <div class="bg-white p-4 rounded shadow border">
+      <h2 class="text-lg font-semibold mb-2">📦 下單次數</h2>
+      <img src="/static/order_count.png" alt="Order Count" />
+    </div>
+    <div class="bg-white p-4 rounded shadow border">
+      <h2 class="text-lg font-semibold mb-2">🎯 勝率統計</h2>
+      <img src="/static/win_rate.png" alt="Win Rate" />
+    </div>
+  </div>
+
   <div class="overflow-auto rounded-xl shadow-lg border bg-white p-4">
     <table class="min-w-full table-auto border-collapse text-sm">
       <thead>
@@ -34,7 +46,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for row in records|reverse %}
+        {% for row in records %}
         <tr class="border-b">
           <td class="p-2 border">{{ row.timestamp }}</td>
           <td class="p-2 border">{{ row.strategy_id }}</td>
