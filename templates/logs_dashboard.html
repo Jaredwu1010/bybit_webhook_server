@@ -1,44 +1,39 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>Webhook Logs Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 p-6">
   <h1 class="text-2xl font-bold mb-4">Webhook Logs Dashboard</h1>
 
-  <!-- 工具列 -->
-  <div class="mb-6 flex flex-wrap items-center gap-4">
-    <form action="/download/log.json" method="get">
-      <button class="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded">
-        下載 log.json
-      </button>
-    </form>
-
-    <form method="post" action="/reset_strategy" class="flex items-center gap-2">
-      <select name="strategy_id" class="border rounded px-2 py-1">
-        {% for row in records|reverse|unique(attribute="strategy_id") %}
-          {% set base_id = row.strategy_id.split("_")[0] ~ "_" ~ row.strategy_id.split("_")[1] %}
-          {% if base_id not in seen_ids %}
-            {% set _ = seen_ids.append(base_id) %}
-            <option value="{{ base_id }}">{{ base_id }}</option>
+  <!-- 控制面板 -->
+  <div class="mb-6 flex flex-wrap gap-4">
+    <form action="/reset_strategy" method="post" class="bg-white shadow p-4 rounded-lg flex items-center gap-2">
+      <label>策略 ID:</label>
+      <select name="strategy_id" class="border p-1 rounded">
+        {% for row in records %}
+          {% if row.strategy_id and row.strategy_id.split("_")[0]+"_"+row.strategy_id.split("_")[1] not in seen_ids %}
+            {% set _ = seen_ids.append(row.strategy_id.split("_")[0]+"_"+row.strategy_id.split("_")[1]) %}
+            <option value="{{ row.strategy_id }}">{{ row.strategy_id.split("_")[0] }}_{{ row.strategy_id.split("_")[1] }}</option>
           {% endif %}
         {% endfor %}
       </select>
-      <input type="password" name="reset_secret" placeholder="輸入密碼"
-             class="border rounded px-2 py-1" required>
-      <button type="submit" class="bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded">
-        Reset 選定策略
-      </button>
+      <input type="password" name="reset_secret" placeholder="密碼" class="border p-1 rounded" />
+      <button type="submit" class="bg-red-500 text-white px-3 py-1 rounded">🔁 Reset</button>
     </form>
+
+    <a href="/download/log.json" class="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700">
+      📥 下載 log.json
+    </a>
   </div>
 
-  <!-- 統計圖表 -->
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-    <div class="bg-white rounded shadow p-4"><img src="/static/mdd_distribution.png" alt="MDD"></div>
-    <div class="bg-white rounded shadow p-4"><img src="/static/equity_curve.png" alt="Equity"></div>
-    <div class="bg-white rounded shadow p-4"><img src="/static/win_rate.png" alt="Win Rate"></div>
+  <!-- 圖表 -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+    <img src="/static/win_rate.png" alt="Win Rate" class="rounded shadow" />
+    <img src="/static/equity_curve.png" alt="Equity Curve" class="rounded shadow" />
+    <img src="/static/mdd_distribution.png" alt="MDD Distribution" class="rounded shadow" />
   </div>
 
   <!-- 表格 -->
@@ -55,7 +50,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for row in records|reverse %}
+        {% for row in records %}
         <tr class="border-b">
           <td class="p-2 border">{{ row.timestamp }}</td>
           <td class="p-2 border">{{ row.strategy_id }}</td>
@@ -68,6 +63,5 @@
       </tbody>
     </table>
   </div>
-
 </body>
 </html>
