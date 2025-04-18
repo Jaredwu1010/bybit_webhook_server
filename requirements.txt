@@ -4,4 +4,7 @@ httpx
 pydantic
 gspread
 oauth2client
+google-auth
+google-auth-oauthlib
 jinja2
+matplotlib
