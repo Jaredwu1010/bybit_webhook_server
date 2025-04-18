@@ -1,38 +1,20 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-  <meta charset="UTF-8" />
-  <title>📊 Webhook Logs Dashboard</title>
+  <meta charset="UTF-8">
+  <title>Webhook Logs Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 p-6">
   <h1 class="text-2xl font-bold mb-4">📊 Webhook Logs Dashboard</h1>
 
-  <div class="mb-6">
-    <a href="/download/log.json" class="bg-blue-600 hover:bg-blue-700 text-white py-1 px-4 rounded">
-      下載 log.json
-    </a>
+  <!-- 按鈕區 -->
+  <div class="mb-6 space-x-4">
+    <a href="/static/win_rate.png" target="_blank" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">📈 查看 Win Rate 圖</a>
+    <a href="/download/log.json" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">📁 下載 JSON 檔</a>
   </div>
 
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-    <div class="bg-white p-4 rounded shadow border">
-      <h2 class="text-lg font-semibold mb-2">📉 策略績效曲線</h2>
-      <img src="/static/equity_curve.png" alt="Equity Curve" />
-    </div>
-    <div class="bg-white p-4 rounded shadow border">
-      <h2 class="text-lg font-semibold mb-2">📈 MDD 分佈</h2>
-      <img src="/static/mdd_distribution.png" alt="MDD 分佈" />
-    </div>
-    <div class="bg-white p-4 rounded shadow border">
-      <h2 class="text-lg font-semibold mb-2">📦 下單次數</h2>
-      <img src="/static/order_count.png" alt="Order Count" />
-    </div>
-    <div class="bg-white p-4 rounded shadow border">
-      <h2 class="text-lg font-semibold mb-2">🎯 勝率統計</h2>
-      <img src="/static/win_rate.png" alt="Win Rate" />
-    </div>
-  </div>
-
+  <!-- 日誌表格 -->
   <div class="overflow-auto rounded-xl shadow-lg border bg-white p-4">
     <table class="min-w-full table-auto border-collapse text-sm">
       <thead>
