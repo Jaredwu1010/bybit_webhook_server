@@ -1,37 +1,145 @@
-<!DOCTYPE html>
-<html lang="zh">
-<head>
-  <meta charset="UTF-8">
-  <title>Webhook Logs Dashboard</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-gray-100 text-gray-800 p-6">
-  <h1 class="text-2xl font-bold mb-4">📊 Webhook Logs Dashboard</h1>
-  <div class="overflow-auto rounded-xl shadow-lg border bg-white p-4">
-    <table class="min-w-full table-auto border-collapse text-sm">
-      <thead>
-        <tr class="bg-gray-200">
-          <th class="p-2 border">時間</th>
-          <th class="p-2 border">策略 ID</th>
-          <th class="p-2 border">事件</th>
-          <th class="p-2 border">Equity</th>
-          <th class="p-2 border">Drawdown</th>
-          <th class="p-2 border">下單動作</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in records %}
-        <tr class="border-b">
-          <td class="p-2 border">{{ row.timestamp }}</td>
-          <td class="p-2 border">{{ row.strategy_id }}</td>
-          <td class="p-2 border">{{ row.event }}</td>
-          <td class="p-2 border">{{ row.equity or '' }}</td>
-          <td class="p-2 border">{{ row.drawdown or '' }}</td>
-          <td class="p-2 border">{{ row.order_action or '' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</body>
-</html>
+ <meta charset="UTF-8">
+   <title>Webhook Logs Dashboard</title>
+   <script src="https://cdn.tailwindcss.com"></script>
+   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+ </head>
+ <body class="bg-gray-100 text-gray-800 p-6">
+   <h1 class="text-2xl font-bold mb-4">📊 Webhook Logs Dashboard</h1>
+ 
+   <!-- 篩選區 -->
+   <div class="bg-white p-4 rounded-lg shadow-md mb-6 flex flex-wrap gap-4 items-center">
+     <label>
+       策略 ID：
+       <select id="strategySelect" class="ml-2 p-1 border rounded">
+         <option value="">全部</option>
+         {% for row in records %}
+           {% if row.strategy_id %}<option value="{{ row.strategy_id }}">{{ row.strategy_id }}</option>{% endif %}
+         {% endfor %}
+       </select>
+     </label>
+     <label>
+       起始時間：<input type="datetime-local" id="startTime" class="ml-2 p-1 border rounded" />
+     </label>
+     <label>
+       結束時間：<input type="datetime-local" id="endTime" class="ml-2 p-1 border rounded" />
+     </label>
+     <label>
+       MDD ≤ <input type="number" id="maxMdd" class="ml-2 w-20 p-1 border rounded" step="0.01" />%
+     </label>
+     <button onclick="applyFilter()" class="ml-2 bg-blue-500 text-white px-4 py-1 rounded">篩選</button>
+   </div>
+ 
+   <!-- Reset 控制區 -->
+   <div class="bg-white p-4 rounded-lg shadow-md mb-6 flex gap-4 items-center">
+     <label>
+       密鑰：<input type="password" id="resetSecret" class="ml-2 p-1 border rounded" placeholder="請輸入 secret" />
+     </label>
+     <button onclick="resetStrategy()" class="bg-red-500 text-white px-4 py-1 rounded">🔁 手動 Reset 選中策略</button>
+   </div>
+ 
+   <!-- 圖表區 -->
+   <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+     <div class="bg-white p-4 rounded shadow"><canvas id="strategyChart"></canvas></div>
+     <div class="bg-white p-4 rounded shadow"><canvas id="mddChart"></canvas></div>
+     <div class="bg-white p-4 rounded shadow"><canvas id="dailyChart"></canvas></div>
+   </div>
+ 
+   <!-- 表格區 -->
+   <div class="overflow-auto rounded-xl shadow-lg border bg-white p-4">
+     <table class="min-w-full table-auto border-collapse text-sm">
+       <thead>
+ @@ -19,7 +60,7 @@ <h1 class="text-2xl font-bold mb-4">📊 Webhook Logs Dashboard</h1>
+           <th class="p-2 border">下單動作</th>
+         </tr>
+       </thead>
+       <tbody>
+       <tbody id="logTable">
+         {% for row in records %}
+         <tr class="border-b">
+           <td class="p-2 border">{{ row.timestamp }}</td>
+ @@ -33,5 +74,84 @@ <h1 class="text-2xl font-bold mb-4">📊 Webhook Logs Dashboard</h1>
+       </tbody>
+     </table>
+   </div>
+ 
+ <script>
+ function applyFilter() {
+   const strategy = document.getElementById("strategySelect").value;
+   const startTime = new Date(document.getElementById("startTime").value);
+   const endTime = new Date(document.getElementById("endTime").value);
+   const maxMdd = parseFloat(document.getElementById("maxMdd").value);
+ 
+   document.querySelectorAll("#logTable tr").forEach(row => {
+     const cells = row.querySelectorAll("td");
+     if (cells.length < 6) return;
+ 
+     const time = new Date(cells[0].innerText);
+     const id = cells[1].innerText;
+     const mdd = parseFloat(cells[4].innerText) || 0;
+ 
+     let show = true;
+     if (strategy && id !== strategy) show = false;
+     if (!isNaN(startTime) && time < startTime) show = false;
+     if (!isNaN(endTime) && time > endTime) show = false;
+     if (!isNaN(maxMdd) && mdd > maxMdd) show = false;
+ 
+     row.style.display = show ? "" : "none";
+   });
+ }
+ 
+ function resetStrategy() {
+   const sid = document.getElementById("strategySelect").value;
+   const secret = document.getElementById("resetSecret").value;
+   if (!sid || !secret) return alert("請選擇策略並輸入密鑰");
+ 
+   fetch(`/webhook`, {
+     method: "POST",
+     headers: { "Content-Type": "application/json" },
+     body: JSON.stringify({
+       strategy_id: sid,
+       signal_type: "reset",
+       secret: secret
+     })
+   }).then(r => r.json()).then(res => {
+     alert(res.status === "reset" ? `✅ ${sid} 已重置` : `❌ 失敗：${res.reason || res.message}`);
+   });
+ }
+ 
+ // 自動生成統計圖表（需搭配後端注入 json_data）
+ const raw = {{ records|tojson }};
+ const strategyStat = {}, mddStat = {}, dateStat = {};
+ raw.forEach(row => {
+   const s = row.strategy_id || "N/A";
+   const d = row.drawdown || 0;
+   const t = row.timestamp.split(" ")[0];
+   strategyStat[s] = (strategyStat[s] || 0) + 1;
+   dateStat[t] = (dateStat[t] || 0) + 1;
+   const bucket = Math.floor(d / 5) * 5;
+   mddStat[bucket] = (mddStat[bucket] || 0) + 1;
+ });
+ 
+ new Chart(document.getElementById("strategyChart"), {
+   type: 'bar', data: {
+     labels: Object.keys(strategyStat),
+     datasets: [{ label: '每策略次數', data: Object.values(strategyStat), backgroundColor: '#60a5fa' }]
+   }, options: { responsive: true }
+ });
+ 
+ new Chart(document.getElementById("mddChart"), {
+   type: 'bar', data: {
+     labels: Object.keys(mddStat).map(x => `${x}~${+x+4}%`),
+     datasets: [{ label: 'MDD分佈', data: Object.values(mddStat), backgroundColor: '#f87171' }]
+   }, options: { responsive: true }
+ });
+ 
+ new Chart(document.getElementById("dailyChart"), {
+   type: 'line', data: {
+     labels: Object.keys(dateStat),
+     datasets: [{ label: '每日事件筆數', data: Object.values(dateStat), backgroundColor: '#34d399', fill: true }]
+   }, options: { responsive: true, tension: 0.3 }
+ });
+ </script>
+ 
+ </body>
+ </html>  
+ </html>
