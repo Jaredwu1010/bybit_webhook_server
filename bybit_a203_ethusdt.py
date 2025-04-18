@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import httpx
 import os
@@ -15,8 +16,12 @@ import collections
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
+# 掛載 static 資料夾作為靜態資源路徑
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 # === 初始化 log 資料夾與檔案（如不存在則建立） ===
 Path("log").mkdir(parents=True, exist_ok=True)
+Path("static").mkdir(parents=True, exist_ok=True)  # 確保 static 資料夾存在
 log_json_path = "log/log.json"
 if not Path(log_json_path).exists():
     with open(log_json_path, "w") as f:
@@ -133,7 +138,6 @@ async def show_logs_dashboard(request: Request):
         print(f"[⚠️ log.json 載入失敗]：{e}")
         records = []
 
-    # 統計圖表
     try:
         strategy_counts = collections.Counter(r["strategy_id"].split("_")[0] + "_" + r["strategy_id"].split("_")[1] for r in records)
         win_count = sum(1 for r in records if r["event"] == "order_sent")
@@ -143,21 +147,18 @@ async def show_logs_dashboard(request: Request):
         mdd_list = [r["drawdown"] for r in records if r["drawdown"] is not None]
         equity_list = [r["equity"] for r in records if r["equity"] is not None]
 
-        # MDD 分佈圖
         plt.figure(figsize=(4, 3))
         plt.hist(mdd_list, bins=10)
         plt.title("MDD 分佈圖")
         plt.tight_layout()
         plt.savefig("static/mdd_distribution.png")
 
-        # Equity 曲線圖
         plt.figure(figsize=(4, 3))
         plt.plot(equity_list)
         plt.title("Equity 曲線")
         plt.tight_layout()
         plt.savefig("static/equity_curve.png")
 
-        # Win Rate 圖
         plt.figure(figsize=(3, 3))
         plt.bar(["Win Rate"], [win_rate])
         plt.title(f"Win Rate: {win_rate:.1f}%")
