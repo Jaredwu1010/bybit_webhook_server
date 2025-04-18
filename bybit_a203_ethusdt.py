@@ -1,14 +1,16 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import httpx
 import os
 import json
 import gspread
+import matplotlib.pyplot as plt
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 from pathlib import Path
+import collections
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -130,4 +132,44 @@ async def show_logs_dashboard(request: Request):
     except Exception as e:
         print(f"[⚠️ log.json 載入失敗]：{e}")
         records = []
+
+    # 顯示統計圖表（win rate、分布、績效）
+    try:
+        strategy_counts = collections.Counter(r["strategy_id"] for r in records)
+        win_count = sum(1 for r in records if r["event"] == "order_sent")
+        total_orders = sum(1 for r in records if r["event"] in ["entry_long", "entry_short"])
+        win_rate = (win_count / total_orders * 100) if total_orders else 0
+
+        mdd_list = [r["drawdown"] for r in records if r["drawdown"] is not None]
+        equity_list = [r["equity"] for r in records if r["equity"] is not None]
+
+        # MDD 分佈圖
+        plt.figure(figsize=(4, 3))
+        plt.hist(mdd_list, bins=10)
+        plt.title("MDD 分佈圖")
+        plt.tight_layout()
+        plt.savefig("static/mdd_distribution.png")
+
+        # Equity 曲線圖
+        plt.figure(figsize=(4, 3))
+        plt.plot(equity_list)
+        plt.title("Equity 曲線")
+        plt.tight_layout()
+        plt.savefig("static/equity_curve.png")
+
+        # Win Rate 圖
+        plt.figure(figsize=(3, 3))
+        plt.bar(["Win Rate"], [win_rate])
+        plt.title(f"Win Rate: {win_rate:.1f}%")
+        plt.ylim(0, 100)
+        plt.tight_layout()
+        plt.savefig("static/win_rate.png")
+    except Exception as e:
+        print("[⚠️ 圖表產生失敗]", e)
+
     return templates.TemplateResponse("logs_dashboard.html", {"request": request, "records": records})
+
+# === log.json 下載 ===
+@app.get("/download/log.json")
+def download_log():
+    return FileResponse("log/log.json", media_type="application/json", filename="log.json")
