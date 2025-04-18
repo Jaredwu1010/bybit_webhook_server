@@ -16,7 +16,7 @@
                     {% set base_id = r.strategy_id.split("_")[0] ~ "_" ~ r.strategy_id.split("_")[1] %}
                     {% if base_id not in seen_ids %}
                         <option value="{{ base_id }}">{{ base_id }}</option>
-                        {% do seen_ids.append(base_id) %}
+                        {% set _ = seen_ids.append(base_id) %}
                     {% endif %}
                 {% endfor %}
             </select>
