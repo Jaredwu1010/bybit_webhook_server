@@ -1,67 +1,71 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-TW">
 <head>
-  <meta charset="UTF-8" />
-  <title>Webhook Logs Dashboard</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+    <meta charset="UTF-8">
+    <title>Webhook Logs Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
 </head>
-<body class="bg-gray-100 text-gray-800 p-6">
-  <h1 class="text-2xl font-bold mb-4">Webhook Logs Dashboard</h1>
+<body class="bg-gray-100 p-6">
+    <h1 class="text-2xl font-bold mb-4">Webhook Logs Dashboard</h1>
 
-  <!-- 控制面板 -->
-  <div class="mb-6 flex flex-wrap gap-4">
-    <form action="/reset_strategy" method="post" class="bg-white shadow p-4 rounded-lg flex items-center gap-2">
-      <label>策略 ID:</label>
-      <select name="strategy_id" class="border p-1 rounded">
-        {% for row in records %}
-          {% if row.strategy_id and row.strategy_id.split("_")[0]+"_"+row.strategy_id.split("_")[1] not in seen_ids %}
-            {% set _ = seen_ids.append(row.strategy_id.split("_")[0]+"_"+row.strategy_id.split("_")[1]) %}
-            <option value="{{ row.strategy_id }}">{{ row.strategy_id.split("_")[0] }}_{{ row.strategy_id.split("_")[1] }}</option>
-          {% endif %}
-        {% endfor %}
-      </select>
-      <input type="password" name="reset_secret" placeholder="密碼" class="border p-1 rounded" />
-      <button type="submit" class="bg-red-500 text-white px-3 py-1 rounded">🔁 Reset</button>
-    </form>
+    <!-- 控制列 -->
+    <div class="flex items-center space-x-2 mb-4">
+        <form method="post" action="/reset_strategy" class="flex items-center space-x-2">
+            <select name="strategy_id" class="border border-gray-300 rounded px-2 py-2">
+                {% for r in records %}
+                    {% set base_id = r.strategy_id.split("_")[0] ~ "_" ~ r.strategy_id.split("_")[1] %}
+                    {% if base_id not in seen_ids %}
+                        <option value="{{ base_id }}">{{ base_id }}</option>
+                        {% do seen_ids.append(base_id) %}
+                    {% endif %}
+                {% endfor %}
+            </select>
+            <input type="password" name="reset_secret" placeholder="密碼" class="border border-gray-300 rounded px-2 py-2">
+            <button type="submit" class="bg-red-500 text-white px-4 py-2 rounded">🔁 Reset</button>
+        </form>
 
-    <a href="/download/log.json" class="ml-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 h-10 rounded">
-      📥 下載 log.json
-    </a>
-  </div>
+        <a href="/download/log.json" class="bg-blue-600 text-white px-4 py-2 rounded h-[42px] flex items-center">⬇ 下載 log.json</a>
+    </div>
 
-  <!-- 圖表 -->
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-    <img src="/static/win_rate.png" alt="Win Rate" class="rounded shadow" />
-    <img src="/static/equity_curve.png" alt="Equity Curve" class="rounded shadow" />
-    <img src="/static/mdd_distribution.png" alt="MDD Distribution" class="rounded shadow" />
-  </div>
+    <!-- 三張統計圖表 -->
+    <div class="flex flex-wrap space-x-4 mb-6">
+        <div class="bg-white p-4 shadow rounded w-[320px] h-[260px]">
+            <img src="/static/win_rate.png" alt="Win Rate" class="w-full h-full object-contain">
+        </div>
+        <div class="bg-white p-4 shadow rounded w-[320px] h-[260px]">
+            <img src="/static/equity_curve.png" alt="Equity Curve" class="w-full h-full object-contain">
+        </div>
+        <div class="bg-white p-4 shadow rounded w-[320px] h-[260px]">
+            <img src="/static/mdd_distribution.png" alt="MDD Distribution" class="w-full h-full object-contain">
+        </div>
+    </div>
 
-  <!-- 表格 -->
-  <div class="overflow-auto rounded-xl shadow-lg border bg-white p-4">
-    <table class="min-w-full table-auto border-collapse text-sm">
-      <thead>
-        <tr class="bg-gray-200">
-          <th class="p-2 border">時間</th>
-          <th class="p-2 border">策略 ID</th>
-          <th class="p-2 border">事件</th>
-          <th class="p-2 border">Equity</th>
-          <th class="p-2 border">Drawdown</th>
-          <th class="p-2 border">下單動作</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in records %}
-        <tr class="border-b">
-          <td class="p-2 border">{{ row.timestamp }}</td>
-          <td class="p-2 border">{{ row.strategy_id }}</td>
-          <td class="p-2 border">{{ row.event }}</td>
-          <td class="p-2 border">{{ row.equity or '' }}</td>
-          <td class="p-2 border">{{ row.drawdown or '' }}</td>
-          <td class="p-2 border">{{ row.order_action or '' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+    <!-- 日誌表格 -->
+    <div class="bg-white p-4 shadow rounded overflow-auto">
+        <table class="min-w-full table-auto text-sm">
+            <thead class="bg-gray-200">
+                <tr>
+                    <th class="px-2 py-2 text-left">時間</th>
+                    <th class="px-2 py-2 text-left">策略 ID</th>
+                    <th class="px-2 py-2 text-left">事件</th>
+                    <th class="px-2 py-2 text-left">Equity</th>
+                    <th class="px-2 py-2 text-left">Drawdown</th>
+                    <th class="px-2 py-2 text-left">下單動作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in records|reverse %}
+                    <tr class="border-b">
+                        <td class="px-2 py-1">{{ r.timestamp }}</td>
+                        <td class="px-2 py-1">{{ r.strategy_id }}</td>
+                        <td class="px-2 py-1">{{ r.event }}</td>
+                        <td class="px-2 py-1">{{ r.equity or '' }}</td>
+                        <td class="px-2 py-1">{{ r.drawdown or '' }}</td>
+                        <td class="px-2 py-1">{{ r.order_action or '' }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </body>
 </html>
