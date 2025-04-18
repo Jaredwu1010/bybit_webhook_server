@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi import FastAPI, Request, Form
+from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import httpx
@@ -133,9 +133,9 @@ async def show_logs_dashboard(request: Request):
         print(f"[⚠️ log.json 載入失敗]：{e}")
         records = []
 
-    # 顯示統計圖表（win rate、分布、績效）
+    # 統計圖表
     try:
-        strategy_counts = collections.Counter(r["strategy_id"] for r in records)
+        strategy_counts = collections.Counter(r["strategy_id"].split("_")[0] + "_" + r["strategy_id"].split("_")[1] for r in records)
         win_count = sum(1 for r in records if r["event"] == "order_sent")
         total_orders = sum(1 for r in records if r["event"] in ["entry_long", "entry_short"])
         win_rate = (win_count / total_orders * 100) if total_orders else 0
@@ -167,9 +167,21 @@ async def show_logs_dashboard(request: Request):
     except Exception as e:
         print("[⚠️ 圖表產生失敗]", e)
 
-    return templates.TemplateResponse("logs_dashboard.html", {"request": request, "records": records})
+    return templates.TemplateResponse("logs_dashboard.html", {"request": request, "records": records, "seen_ids": []})
 
 # === log.json 下載 ===
 @app.get("/download/log.json")
 def download_log():
     return FileResponse("log/log.json", media_type="application/json", filename="log.json")
+
+# === Reset 選定策略（POST） ===
+@app.post("/reset_strategy")
+async def reset_strategy(strategy_id: str = Form(...), reset_secret: str = Form(...)):
+    expected_secret = os.getenv("RESET_SECRET", "letmein")
+    if reset_secret != expected_secret:
+        return HTMLResponse(content="<h1>密碼錯誤，請重新輸入。</h1>", status_code=403)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    write_to_gsheet(timestamp, strategy_id, "manual_reset")
+    await push_line_message(f"🔁 手動重置策略：{strategy_id}")
+    return RedirectResponse(url="/logs_dashboard", status_code=302)
