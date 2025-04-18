@@ -110,7 +110,6 @@ def log_event(strategy_id, event, equity=None, drawdown=None, order_action=None)
     except Exception as e:
         print(f"[⚠️ Google Sheets 寫入失敗]：{e}")
 
-# ✅ 將此函數加入 MDD 停單 webhook 段落中：
 @app.post("/webhook")
 async def webhook_handler(payload: WebhookPayload):
     sid = payload.strategy_id
@@ -174,3 +173,7 @@ async def get_status(strategy_id: str):
         "max_equity": max_eq,
         "paused": paused
     }
+
+@app.post("/line_callback")
+async def line_callback(request: Request):
+    return {"status": "ok"}
