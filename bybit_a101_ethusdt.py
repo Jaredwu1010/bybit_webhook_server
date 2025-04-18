@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import httpx
 import os
@@ -19,6 +20,7 @@ matplotlib.use('Agg')
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="log"), name="static")
 
 # === Webhook 資料結構定義 ===
 class WebhookPayloadData(BaseModel):
