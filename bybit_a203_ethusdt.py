@@ -7,9 +7,17 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
+from pathlib import Path
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+
+# === 初始化 log 資料夾與檔案（如不存在則建立） ===
+Path("log").mkdir(parents=True, exist_ok=True)
+log_json_path = "log/log.json"
+if not Path(log_json_path).exists():
+    with open(log_json_path, "w") as f:
+        json.dump([], f)
 
 # === Google Sheets 初始化 ===
 SHEET_URL = os.getenv("GOOGLE_SHEET_URL")
@@ -65,6 +73,10 @@ async def test_line():
 # === logs dashboard HTML 頁面 ===
 @app.get("/logs_dashboard", response_class=HTMLResponse)
 async def show_logs_dashboard(request: Request):
-    with open("log/log.json", "r") as f:
-        records = json.load(f)
-    return templat
+    try:
+        with open("log/log.json", "r") as f:
+            records = json.load(f)
+    except Exception as e:
+        print(f"[⚠️ log.json 載入失敗]：{e}")
+        records = []
+    return templates.TemplateResponse("logs_dashboard.html", {"request": request, "records": records})
