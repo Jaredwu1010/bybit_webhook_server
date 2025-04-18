@@ -18,7 +18,6 @@ from collections import defaultdict
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# === Webhook 資料結構定義 ===
 class WebhookPayloadData(BaseModel):
     action: str = None
     position_size: float = 0
@@ -32,7 +31,6 @@ class WebhookPayload(BaseModel):
     data: WebhookPayloadData = None
     secret: str = None
 
-# === MDD 停單邏輯 ===
 MAX_DRAWDOWN_PERCENT = float(os.getenv("MAX_DRAWDOWN", 10))
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 LINE_CHANNEL_TOKEN = os.getenv("LINE_CHANNEL_TOKEN")
@@ -64,7 +62,6 @@ try:
 except Exception as e:
     print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
 
-# === 發送 LINE 推播通知函數 ===
 async def push_line_message(message: str):
     if not LINE_CHANNEL_TOKEN:
         return
@@ -78,11 +75,11 @@ async def push_line_message(message: str):
             "messages": [{"type": "text", "text": message}]
         }
         async with httpx.AsyncClient() as client:
-            await client.post("https://api.line.me/v2/bot/message/push", headers=headers, json=body)
+            resp = await client.post("https://api.line.me/v2/bot/message/push", headers=headers, json=body)
+            print(f"[✅ LINE 發送回應] {resp.status_code} - {resp.text}")
     except Exception as e:
         print(f"[⚠️ LINE 推播失敗]：{e}")
 
-# === 寫入 log 函數 ===
 def log_event(strategy_id, event, equity=None, drawdown=None, order_action=None):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     row = [timestamp, strategy_id, event, equity, drawdown, order_action]
@@ -177,3 +174,8 @@ async def get_status(strategy_id: str):
 @app.post("/line_callback")
 async def line_callback(request: Request):
     return {"status": "ok"}
+
+@app.get("/test_line")
+async def test_line():
+    await push_line_message("📢 測試訊息：LINE 通知測試成功！")
+    return {"status": "sent"}
