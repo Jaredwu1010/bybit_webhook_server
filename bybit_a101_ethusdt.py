@@ -36,7 +36,7 @@ class WebhookPayload(BaseModel):
 MAX_DRAWDOWN_PERCENT = float(os.getenv("MAX_DRAWDOWN", 10))
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 LINE_CHANNEL_TOKEN = os.getenv("LINE_CHANNEL_TOKEN")
-LINE_USER_ID = "U5c57100d678f9f54eb3e0cace3326274"  # ✅ 你的 userId
+LINE_USER_ID = os.getenv("LINE_USER_ID")  # ✅ 改為從環境變數讀取
 
 max_equity = {}
 strategy_status = {}
