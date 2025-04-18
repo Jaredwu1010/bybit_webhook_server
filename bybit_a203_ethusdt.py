@@ -13,20 +13,18 @@ from datetime import datetime
 from pathlib import Path
 import collections
 
-# === 修正 static 目錄初始化與掛載順序 ===
-Path("static").mkdir(parents=True, exist_ok=True)
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
-
-# === 初始化 log 資料夾與檔案（如不存在則建立） ===
+app.mount("/static", StaticFiles(directory="static"), name="static")  # 靜態圖表路徑
 Path("log").mkdir(parents=True, exist_ok=True)
+Path("static").mkdir(parents=True, exist_ok=True)
+
+templates = Jinja2Templates(directory="templates")
 log_json_path = "log/log.json"
 if not Path(log_json_path).exists():
     with open(log_json_path, "w") as f:
         json.dump([], f)
 
-# === Google Sheets 初始化 ===
+# Google Sheets 初始化
 SHEET_URL = os.getenv("GOOGLE_SHEET_URL")
 sheet = None
 try:
@@ -37,7 +35,6 @@ try:
 except Exception as e:
     print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
 
-# === 寫入 log 至 Google Sheets ===
 def write_to_gsheet(timestamp, strategy_id, event, equity=None, drawdown=None, order_action=None):
     try:
         if sheet:
@@ -47,7 +44,7 @@ def write_to_gsheet(timestamp, strategy_id, event, equity=None, drawdown=None, o
     except Exception as e:
         print(f"[⚠️ Google Sheets 寫入失敗]：{e}")
 
-# === LINE 通知函式 ===
+# LINE 通知
 async def push_line_message(msg: str):
     LINE_USER_ID = os.getenv("LINE_USER_ID")
     LINE_CHANNEL_TOKEN = os.getenv("LINE_CHANNEL_TOKEN")
@@ -67,7 +64,7 @@ async def push_line_message(msg: str):
         r = await client.post("https://api.line.me/v2/bot/message/push", headers=headers, json=body)
         print("[LINE 回應]", r.status_code, await r.aread())
 
-# === Webhook Payload 定義 ===
+# webhook 資料格式
 class WebhookPayloadData(BaseModel):
     action: str
     position_size: float
@@ -81,7 +78,6 @@ class WebhookPayload(BaseModel):
     data: WebhookPayloadData = None
     secret: str = None
 
-# === Webhook 主邏輯 ===
 @app.post("/webhook")
 async def webhook_handler(payload: WebhookPayload):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -91,7 +87,6 @@ async def webhook_handler(payload: WebhookPayload):
     drawdown = None
     action = payload.data.action if payload.data else ""
 
-    # === 寫入 log.json ===
     try:
         with open(log_json_path, "r+") as f:
             logs = json.load(f)
@@ -109,15 +104,10 @@ async def webhook_handler(payload: WebhookPayload):
     except Exception as e:
         print(f"[⚠️ log.json 寫入失敗]：{e}")
 
-    # === 寫入 Google Sheets ===
     write_to_gsheet(timestamp, sid, event, equity, drawdown, action)
-
-    # === LINE 通知（選用） ===
     await push_line_message(f"✅ 策略 {sid} 收到訊號：{event}，動作：{action}")
-
     return {"status": "ok", "strategy_id": sid}
 
-# === 測試 LINE 是否成功通知 ===
 @app.get("/test_line")
 async def test_line():
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -127,11 +117,10 @@ async def test_line():
     await push_line_message("📢 測試訊息：LINE 通知測試成功！")
     return {"status": "ok"}
 
-# === logs dashboard HTML 頁面 ===
 @app.get("/logs_dashboard", response_class=HTMLResponse)
 async def show_logs_dashboard(request: Request):
     try:
-        with open("log/log.json", "r") as f:
+        with open(log_json_path, "r") as f:
             records = json.load(f)
     except Exception as e:
         print(f"[⚠️ log.json 載入失敗]：{e}")
@@ -146,38 +135,49 @@ async def show_logs_dashboard(request: Request):
         mdd_list = [r["drawdown"] for r in records if r["drawdown"] is not None]
         equity_list = [r["equity"] for r in records if r["equity"] is not None]
 
-        # MDD 分佈圖
-        plt.figure(figsize=(4, 3))
-        plt.hist(mdd_list, bins=10)
-        plt.title("MDD 分佈圖")
-        plt.tight_layout()
-        plt.savefig("static/mdd_distribution.png")
+        # 圖表防錯包裝
+        try:
+            if mdd_list:
+                plt.figure(figsize=(4, 3))
+                plt.hist(mdd_list, bins=10)
+                plt.title("MDD Distribution")
+                plt.tight_layout()
+                plt.savefig("static/mdd_distribution.png")
+            else:
+                print("[⚠️ MDD 無資料]")
+        except Exception as e:
+            print(f"[❌ MDD 分布圖錯誤] {e}")
 
-        # Equity 曲線圖
-        plt.figure(figsize=(4, 3))
-        plt.plot(equity_list)
-        plt.title("Equity 曲線")
-        plt.tight_layout()
-        plt.savefig("static/equity_curve.png")
+        try:
+            if equity_list:
+                plt.figure(figsize=(4, 3))
+                plt.plot(equity_list)
+                plt.title("Equity Curve")
+                plt.tight_layout()
+                plt.savefig("static/equity_curve.png")
+            else:
+                print("[⚠️ Equity 無資料]")
+        except Exception as e:
+            print(f"[❌ Equity 圖錯誤] {e}")
 
-        # Win Rate 圖
-        plt.figure(figsize=(3, 3))
-        plt.bar(["Win Rate"], [win_rate])
-        plt.title(f"Win Rate: {win_rate:.1f}%")
-        plt.ylim(0, 100)
-        plt.tight_layout()
-        plt.savefig("static/win_rate.png")
+        try:
+            plt.figure(figsize=(3, 3))
+            plt.bar(["Win Rate"], [win_rate])
+            plt.title(f"Win Rate: {win_rate:.1f}%")
+            plt.ylim(0, 100)
+            plt.tight_layout()
+            plt.savefig("static/win_rate.png")
+        except Exception as e:
+            print(f"[❌ Win Rate 圖錯誤] {e}")
     except Exception as e:
-        print("[⚠️ 圖表產生失敗]", e)
+        print("[⚠️ 圖表產生總體錯誤]", e)
 
     return templates.TemplateResponse("logs_dashboard.html", {"request": request, "records": records, "seen_ids": []})
 
-# === log.json 下載 ===
 @app.get("/download/log.json")
 def download_log():
-    return FileResponse("log/log.json", media_type="application/json", filename="log.json")
+    return FileResponse(log_json_path, media_type="application/json", filename="log.json")
 
-# === Reset 選定策略（POST） ===
 @app.post("/reset_strategy")
 async def reset_strategy(strategy_id: str = Form(...), reset_secret: str = Form(...)):
     expected_secret = os.getenv("RESET_SECRET", "letmein")
