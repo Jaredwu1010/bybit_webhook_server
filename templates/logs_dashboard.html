@@ -18,7 +18,6 @@ from collections import defaultdict
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# === Webhook 資料結構定義 ===
 class WebhookPayloadData(BaseModel):
     action: str = None
     position_size: float = 0
@@ -32,7 +31,6 @@ class WebhookPayload(BaseModel):
     data: WebhookPayloadData = None
     secret: str = None
 
-# === MDD 停單邏輯 ===
 MAX_DRAWDOWN_PERCENT = float(os.getenv("MAX_DRAWDOWN", 10))
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 LINE_CHANNEL_TOKEN = os.getenv("LINE_CHANNEL_TOKEN")
@@ -64,9 +62,9 @@ try:
 except Exception as e:
     print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
 
-# === 發送 LINE 推播通知函數 ===
 async def push_line_message(message: str):
-    if not LINE_CHANNEL_TOKEN:
+    if not LINE_CHANNEL_TOKEN or not LINE_USER_ID:
+        print("[❌ 缺少 LINE TOKEN 或 USER ID]", flush=True)
         return
     try:
         headers = {
@@ -78,11 +76,11 @@ async def push_line_message(message: str):
             "messages": [{"type": "text", "text": message}]
         }
         async with httpx.AsyncClient() as client:
-            await client.post("https://api.line.me/v2/bot/message/push", headers=headers, json=body)
+            resp = await client.post("https://api.line.me/v2/bot/message/push", headers=headers, json=body)
+            print(f"[✅ LINE 發送回應] {resp.status_code} - {resp.text}", flush=True)
     except Exception as e:
-        print(f"[⚠️ LINE 推播失敗]：{e}")
+        print(f"[⚠️ LINE 推播失敗]：{e}", flush=True)
 
-# === 寫入 log 函數 ===
 def log_event(strategy_id, event, equity=None, drawdown=None, order_action=None):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     row = [timestamp, strategy_id, event, equity, drawdown, order_action]
@@ -157,7 +155,7 @@ async def webhook_handler(payload: WebhookPayload):
             return {"status": "ok", "message": "倉量為 0 不處理"}
 
         side = "Buy" if action == "buy" else "Sell"
-        result = await place_order(symbol, side, size)
+        result = {"side": side, "symbol": symbol, "qty": size}  # mock
         log_event(sid, "order_sent", order_action=action)
         return {"status": "success", "bybit_response": result}
 
@@ -177,3 +175,21 @@ async def get_status(strategy_id: str):
 @app.post("/line_callback")
 async def line_callback(request: Request):
     return {"status": "ok"}
+
+@app.get("/test_line")
+async def test_line():
+    await push_line_message("📢 測試訊息：LINE 通知測試成功！")
+    return {"status": "sent"}
+
+@app.get("/logs_dashboard", response_class=HTMLResponse)
+async def logs_dashboard(request: Request):
+    if not os.path.exists(log_path_json):
+        return HTMLResponse(content="<h1>尚未產生任何 log.json 記錄</h1>", status_code=404)
+
+    with open(log_path_json, "r") as f:
+        records = json.load(f)
+
+    return templates.TemplateResponse("logs_dashboard.html", {
+        "request": request,
+        "records": records
+    })
