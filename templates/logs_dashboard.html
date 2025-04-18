@@ -6,15 +6,42 @@
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 p-6">
-  <h1 class="text-2xl font-bold mb-4">📊 Webhook Logs Dashboard</h1>
+  <h1 class="text-2xl font-bold mb-4">Webhook Logs Dashboard</h1>
 
-  <!-- 按鈕區 -->
-  <div class="mb-6 space-x-4">
-    <a href="/static/win_rate.png" target="_blank" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">📈 查看 Win Rate 圖</a>
-    <a href="/download/log.json" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">📁 下載 JSON 檔</a>
+  <!-- 工具列 -->
+  <div class="mb-6 flex flex-wrap items-center gap-4">
+    <form action="/download/log.json" method="get">
+      <button class="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded">
+        下載 log.json
+      </button>
+    </form>
+
+    <form method="post" action="/reset_strategy" class="flex items-center gap-2">
+      <select name="strategy_id" class="border rounded px-2 py-1">
+        {% for row in records|reverse|unique(attribute="strategy_id") %}
+          {% set base_id = row.strategy_id.split("_")[0] ~ "_" ~ row.strategy_id.split("_")[1] %}
+          {% if base_id not in seen_ids %}
+            {% set _ = seen_ids.append(base_id) %}
+            <option value="{{ base_id }}">{{ base_id }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+      <input type="password" name="reset_secret" placeholder="輸入密碼"
+             class="border rounded px-2 py-1" required>
+      <button type="submit" class="bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded">
+        Reset 選定策略
+      </button>
+    </form>
   </div>
 
-  <!-- 日誌表格 -->
+  <!-- 統計圖表 -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+    <div class="bg-white rounded shadow p-4"><img src="/static/mdd_distribution.png" alt="MDD"></div>
+    <div class="bg-white rounded shadow p-4"><img src="/static/equity_curve.png" alt="Equity"></div>
+    <div class="bg-white rounded shadow p-4"><img src="/static/win_rate.png" alt="Win Rate"></div>
+  </div>
+
+  <!-- 表格 -->
   <div class="overflow-auto rounded-xl shadow-lg border bg-white p-4">
     <table class="min-w-full table-auto border-collapse text-sm">
       <thead>
@@ -28,7 +55,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for row in records %}
+        {% for row in records|reverse %}
         <tr class="border-b">
           <td class="p-2 border">{{ row.timestamp }}</td>
           <td class="p-2 border">{{ row.strategy_id }}</td>
@@ -41,5 +68,6 @@
       </tbody>
     </table>
   </div>
+
 </body>
 </html>
