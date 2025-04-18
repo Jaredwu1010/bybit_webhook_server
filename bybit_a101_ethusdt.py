@@ -63,8 +63,6 @@ except Exception as e:
     print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
 
 async def push_line_message(message: str):
-    print(f"[DEBUG] LINE_CHANNEL_TOKEN: {LINE_CHANNEL_TOKEN[:8]}...", flush=True)
-    print(f"[DEBUG] LINE_USER_ID: {LINE_USER_ID}", flush=True)
     if not LINE_CHANNEL_TOKEN or not LINE_USER_ID:
         print("[❌ 缺少 LINE TOKEN 或 USER ID]", flush=True)
         return
@@ -157,7 +155,7 @@ async def webhook_handler(payload: WebhookPayload):
             return {"status": "ok", "message": "倉量為 0 不處理"}
 
         side = "Buy" if action == "buy" else "Sell"
-        result = await place_order(symbol, side, size)
+        result = {"side": side, "symbol": symbol, "qty": size}  # mock
         log_event(sid, "order_sent", order_action=action)
         return {"status": "success", "bybit_response": result}
 
@@ -182,3 +180,16 @@ async def line_callback(request: Request):
 async def test_line():
     await push_line_message("📢 測試訊息：LINE 通知測試成功！")
     return {"status": "sent"}
+
+@app.get("/logs_dashboard", response_class=HTMLResponse)
+async def logs_dashboard(request: Request):
+    if not os.path.exists(log_path_json):
+        return HTMLResponse(content="<h1>尚未產生任何 log.json 記錄</h1>", status_code=404)
+
+    with open(log_path_json, "r") as f:
+        records = json.load(f)
+
+    return templates.TemplateResponse("logs_dashboard.html", {
+        "request": request,
+        "records": records
+    })
