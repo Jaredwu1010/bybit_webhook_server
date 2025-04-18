@@ -63,7 +63,10 @@ except Exception as e:
     print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
 
 async def push_line_message(message: str):
-    if not LINE_CHANNEL_TOKEN:
+    print(f"[DEBUG] LINE_CHANNEL_TOKEN: {LINE_CHANNEL_TOKEN[:8]}...", flush=True)
+    print(f"[DEBUG] LINE_USER_ID: {LINE_USER_ID}", flush=True)
+    if not LINE_CHANNEL_TOKEN or not LINE_USER_ID:
+        print("[❌ 缺少 LINE TOKEN 或 USER ID]", flush=True)
         return
     try:
         headers = {
@@ -76,9 +79,9 @@ async def push_line_message(message: str):
         }
         async with httpx.AsyncClient() as client:
             resp = await client.post("https://api.line.me/v2/bot/message/push", headers=headers, json=body)
-            print(f"[✅ LINE 發送回應] {resp.status_code} - {resp.text}")
+            print(f"[✅ LINE 發送回應] {resp.status_code} - {resp.text}", flush=True)
     except Exception as e:
-        print(f"[⚠️ LINE 推播失敗]：{e}")
+        print(f"[⚠️ LINE 推播失敗]：{e}", flush=True)
 
 def log_event(strategy_id, event, equity=None, drawdown=None, order_action=None):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
