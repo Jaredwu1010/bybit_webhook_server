@@ -59,6 +59,11 @@ def write_to_gsheet(timestamp, strategy_id, event, equity=None, drawdown=None, o
         print(f"[⚠️ Google Sheets 寫入失敗]：{e}")
 
 async def push_line_message(msg: str):
+    use_line = os.getenv("USE_LINE_NOTIFY", "false").lower() == "true"
+    if not use_line:
+        print("[⚠️] USE_LINE_NOTIFY 為 false，已略過 LINE 推送")
+        return
+
     LINE_USER_ID = os.getenv("LINE_USER_ID")
     LINE_CHANNEL_TOKEN = os.getenv("LINE_CHANNEL_TOKEN")
     if not LINE_USER_ID or not LINE_CHANNEL_TOKEN:
@@ -189,6 +194,25 @@ async def test_line():
     await push_line_message("📢 測試訊息：LINE 通知測試成功！")
     return {"status": "ok"}
 
+@app.get("/line_status")
+async def line_status():
+    use_line = os.getenv("USE_LINE_NOTIFY", "false").lower() == "true"
+    return {"line_notify_enabled": use_line}
+
+# ✅ 新增 /status 查詢策略狀態 API
+@app.get("/status")
+async def check_strategy_status(strategy_id: str):
+    try:
+        with open("log/log.json", "r") as f:
+            records = json.load(f)
+        matched = [r for r in records if r.get("strategy_id") == strategy_id]
+        if matched:
+            return {"status": "found", "count": len(matched)}
+        else:
+            return {"status": "not found"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 @app.get("/logs_dashboard", response_class=HTMLResponse)
 async def show_logs_dashboard(request: Request):
     try:
@@ -264,3 +288,54 @@ async def reset_strategy(request: Request):
     except Exception as e:
         print("[⚠️ Reset Strategy 處理失敗]", e)
         return HTMLResponse(content="<h1>內部錯誤</h1>", status_code=500)
+
+# ✅ 新增根目錄首頁，避免 Render 預設 GET / 回傳 404
+@app.get("/")
+async def root():
+    return {"message": "Webhook Server is live"}
+
+@app.get("/settings_dashboard", response_class=HTMLResponse)
+async def settings_dashboard():
+    keys = [
+        "USE_LINE_NOTIFY",
+        "LINE_USER_ID",
+        "LINE_CHANNEL_TOKEN",
+        "RESET_SECRET",
+        "GOOGLE_SHEET_URL",
+        "BYBIT_API_KEY",
+        "BYBIT_API_SECRET",
+    ]
+    rows = []
+    for key in keys:
+        val = os.getenv(key)
+        if key == "RESET_SECRET" and val:
+            val_display = "••••••••"  # 隱藏敏感密碼
+        elif val:
+            val_display = val
+        else:
+            val_display = ""
+
+        status = "✅ 設定完成" if val else "❌ 缺失"
+        rows.append(f"<tr><td>{key}</td><td>{status}</td><td><code>{val_display}</code></td></tr>")
+
+    html = f"""
+    <html>
+    <head>
+        <title>Settings Dashboard</title>
+        <style>
+            body {{ font-family: Arial; padding: 20px; }}
+            table {{ border-collapse: collapse; width: 100%; }}
+            th, td {{ border: 1px solid #ccc; padding: 8px; }}
+            th {{ background-color: #f4f4f4; }}
+        </style>
+    </head>
+    <body>
+        <h2>📋 Webhook Server 設定狀態</h2>
+        <table>
+            <tr><th>環境變數</th><th>狀態</th><th>內容</th></tr>
+            {''.join(rows)}
+        </table>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
