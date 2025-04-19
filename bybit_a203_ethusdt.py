@@ -151,6 +151,14 @@ async def webhook_handler(payload: WebhookPayload):
     await push_line_message(f"✅ 策略 {sid} 收到訊號：{event}，動作：{action}")
     return {"status": "ok", "strategy_id": sid}
 
+# ✅ 健康檢查路由，支援 GET 與 HEAD 請求（避免 405 錯誤）
+# 📌 給 UptimeRobot 使用，保持 Render Server 醒著
+# 📌 不寫入 log、不發 LINE 通知、不與 TV webhook 混用
+
+@app.api_route("/healthcheck", methods=["GET", "HEAD"])
+async def healthcheck():
+    return {"status": "server is running"}
+
 @app.get("/test_line")
 async def test_line():
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
