@@ -296,26 +296,8 @@ async def root():
 
 @app.get("/settings_dashboard", response_class=HTMLResponse)
 async def settings_dashboard():
-    keys = [
-        "USE_LINE_NOTIFY",
-        "LINE_USER_ID",
-        "LINE_CHANNEL_TOKEN",
-        "RESET_SECRET",
-        "GOOGLE_SHEET_URL",
-        "BYBIT_API_KEY",
-        "BYBIT_API_SECRET",
-    ]
-    rows = []
-    for key in keys:
-        val = os.getenv(key)
-        if key == "RESET_SECRET" and val:
-            val_display = "••••••••"
-        elif val:
-            val_display = val
-        else:
-            val_display = ""
-        status = "✅ 設定完成" if val else "❌ 缺失"
-        rows.append(f"<tr><td>{key}</td><td>{status}</td><td><code>{val_display}</code></td></tr>")
+    use_line = os.getenv("USE_LINE_NOTIFY", "false").lower() == "true"
+    use_line_status = "✅ 已啟用" if use_line else "❌ 未啟用"
 
     html = f"""
     <html>
@@ -333,25 +315,16 @@ async def settings_dashboard():
                 margin-top: 2em;
                 color: #222;
             }}
-            table {{
-                width: 100%;
-                border-collapse: collapse;
+            .status-box {{
+                margin-top: 10px;
+                font-weight: bold;
+            }}
+            .box {{
                 background: #fff;
-                box-shadow: 0 0 10px rgba(0,0,0,0.05);
+                padding: 16px;
+                border-radius: 8px;
+                box-shadow: 0 0 8px rgba(0,0,0,0.05);
                 margin-bottom: 30px;
-            }}
-            th, td {{
-                border: 1px solid #ddd;
-                padding: 10px;
-                font-size: 15px;
-            }}
-            th {{
-                background: #f0f0f0;
-            }}
-            code {{
-                background: #eee;
-                padding: 2px 6px;
-                border-radius: 4px;
             }}
             .button-group {{
                 display: flex;
@@ -371,10 +344,6 @@ async def settings_dashboard():
             button:hover {{
                 background-color: #0056b3;
             }}
-            .status-box {{
-                margin-top: 10px;
-                font-weight: bold;
-            }}
             @media (max-width: 600px) {{
                 .button-group {{
                     flex-direction: column;
@@ -386,20 +355,20 @@ async def settings_dashboard():
         </style>
     </head>
     <body>
-        <h2>📋 Webhook Server 設定狀態</h2>
-        <table>
-            <tr><th>環境變數</th><th>狀態</th><th>內容</th></tr>
-            {''.join(rows)}
-        </table>
-
-        <h2>🧪 測試功能</h2>
-        <div class="button-group">
-            <button onclick="testLine()">📲 測試 LINE 通知</button>
-            <button onclick="testWebhook()">📩 模擬 webhook 下單</button>
-            <button onclick="testReset()">🔁 測試重置策略</button>
+        <div class="box">
+            <h2>🔔 LINE 通知狀態</h2>
+            <p>USE_LINE_NOTIFY：<strong>{use_line_status}</strong></p>
         </div>
 
-        <div id="result" class="status-box">📡 等待測試中…</div>
+        <div class="box">
+            <h2>🧪 測試功能</h2>
+            <div class="button-group">
+                <button onclick="testLine()">📲 測試 LINE 通知</button>
+                <button onclick="testWebhook()">📩 模擬 webhook 下單</button>
+                <button onclick="testReset()">🔁 測試重置策略</button>
+            </div>
+            <div id="result" class="status-box">📡 等待測試中…</div>
+        </div>
 
         <script>
             async function testLine() {{
@@ -455,3 +424,4 @@ async def settings_dashboard():
     </html>
     """
     return HTMLResponse(content=html)
+
