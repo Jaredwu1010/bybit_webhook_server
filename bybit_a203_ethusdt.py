@@ -131,7 +131,18 @@ class WebhookPayload(BaseModel):
 async def line_callback(request: Request):
     try:
         payload = await request.json()
-        print("[📩 LINE Callback 收到資料]", json.dumps(payload, indent=2))
+        events = payload.get("events", [])
+
+        for event in events:
+            event_type = event.get("type", "")
+            source = event.get("source", {})
+            user_type = source.get("type", "")
+            user_id = source.get("userId", "")
+            group_id = source.get("groupId", "")
+            message = event.get("message", {})
+            msg_type = message.get("type", "")
+
+            print(f"[📩 LINE] 類型: {event_type}, 訊息類型: {msg_type}, 來源: {user_type}, userId: {user_id}{' | groupId: ' + group_id if group_id else ''}")
     except Exception as e:
         print("[⚠️ LINE Callback 處理失敗]", e)
     return {"status": "received"}
