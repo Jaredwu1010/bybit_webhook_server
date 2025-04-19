@@ -309,12 +309,11 @@ async def settings_dashboard():
     for key in keys:
         val = os.getenv(key)
         if key == "RESET_SECRET" and val:
-            val_display = "••••••••"  # 隱藏敏感密碼
+            val_display = "••••••••"
         elif val:
             val_display = val
         else:
             val_display = ""
-
         status = "✅ 設定完成" if val else "❌ 缺失"
         rows.append(f"<tr><td>{key}</td><td>{status}</td><td><code>{val_display}</code></td></tr>")
 
@@ -322,11 +321,68 @@ async def settings_dashboard():
     <html>
     <head>
         <title>Settings Dashboard</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {{ font-family: Arial; padding: 20px; }}
-            table {{ border-collapse: collapse; width: 100%; }}
-            th, td {{ border: 1px solid #ccc; padding: 8px; }}
-            th {{ background-color: #f4f4f4; }}
+            body {{
+                font-family: Arial, sans-serif;
+                padding: 20px;
+                background: #f5f7fa;
+                color: #333;
+            }}
+            h2 {{
+                margin-top: 2em;
+                color: #222;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                background: #fff;
+                box-shadow: 0 0 10px rgba(0,0,0,0.05);
+                margin-bottom: 30px;
+            }}
+            th, td {{
+                border: 1px solid #ddd;
+                padding: 10px;
+                font-size: 15px;
+            }}
+            th {{
+                background: #f0f0f0;
+            }}
+            code {{
+                background: #eee;
+                padding: 2px 6px;
+                border-radius: 4px;
+            }}
+            .button-group {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 12px;
+                margin-bottom: 20px;
+            }}
+            button {{
+                background-color: #007bff;
+                color: white;
+                border: none;
+                padding: 10px 18px;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 15px;
+            }}
+            button:hover {{
+                background-color: #0056b3;
+            }}
+            .status-box {{
+                margin-top: 10px;
+                font-weight: bold;
+            }}
+            @media (max-width: 600px) {{
+                .button-group {{
+                    flex-direction: column;
+                }}
+                button {{
+                    width: 100%;
+                }}
+            }}
         </style>
     </head>
     <body>
@@ -335,6 +391,66 @@ async def settings_dashboard():
             <tr><th>環境變數</th><th>狀態</th><th>內容</th></tr>
             {''.join(rows)}
         </table>
+
+        <h2>🧪 測試功能</h2>
+        <div class="button-group">
+            <button onclick="testLine()">📲 測試 LINE 通知</button>
+            <button onclick="testWebhook()">📩 模擬 webhook 下單</button>
+            <button onclick="testReset()">🔁 測試重置策略</button>
+        </div>
+
+        <div id="result" class="status-box">📡 等待測試中…</div>
+
+        <script>
+            async function testLine() {{
+                document.getElementById('result').innerText = "⏳ 傳送 LINE 測試中...";
+                const res = await fetch("/test_line");
+                const data = await res.json();
+                document.getElementById('result').innerText = "✅ LINE 測試完成：" + JSON.stringify(data);
+            }}
+
+            async function testWebhook() {{
+                document.getElementById('result').innerText = "📩 發送 webhook 測試中...";
+                const res = await fetch("/webhook", {{
+                    method: "POST",
+                    headers: {{
+                        "Content-Type": "application/json"
+                    }},
+                    body: JSON.stringify({{
+                        strategy_id: "TEST_WEBHOOK",
+                        signal_type: "entry_long",
+                        equity: 9999,
+                        symbol: "ETHUSDT",
+                        order_type: "market",
+                        data: {{
+                            action: "buy",
+                            position_size: 0.01
+                        }},
+                        secret: ""
+                    }})
+                }});
+                const data = await res.json();
+                document.getElementById('result').innerText = "✅ webhook 測試完成：" + JSON.stringify(data);
+            }}
+
+            async function testReset() {{
+                document.getElementById('result').innerText = "🔁 傳送重置指令中...";
+                const form = new FormData();
+                form.append("strategy_id", "TEST_STRATEGY");
+                form.append("reset_secret", "letmein");
+
+                const res = await fetch("/reset_strategy", {{
+                    method: "POST",
+                    body: form
+                }});
+                const text = await res.text();
+                if (res.status === 302 || text.includes("logs_dashboard")) {{
+                    document.getElementById('result').innerText = "✅ 策略重置成功！";
+                }} else {{
+                    document.getElementById('result').innerText = "❌ 重置失敗：" + text;
+                }}
+            }}
+        </script>
     </body>
     </html>
     """
