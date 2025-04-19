@@ -38,10 +38,10 @@ try:
 except Exception as e:
     print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
 
-def write_to_gsheet(timestamp, strategy_id, event, equity=None, drawdown=None, order_action=None):
+def write_to_gsheet(timestamp, strategy_id, event, equity=None, drawdown=None, order_action=None, trigger_type=None, comment=None, order_id=None):
     try:
         if sheet:
-            row = [timestamp, strategy_id, event, equity or '', drawdown or '', order_action or '']
+            row = [timestamp, strategy_id, event, equity or '', drawdown or '', order_action or '', trigger_type or '', comment or '', order_id or '']
             sheet.append_row(row)
             print("[✅ 已寫入 Google Sheets]")
     except Exception as e:
@@ -97,17 +97,18 @@ async def place_order(symbol: str, side: str, qty: float):
         print("[📤 Bybit 下單結果]", response.status_code, await response.aread())
         return response.json()
 
-class WebhookPayloadData(BaseModel):
-    action: str
-    position_size: float
-
 class WebhookPayload(BaseModel):
     strategy_id: str
     signal_type: str
     equity: float = None
     symbol: str = None
     order_type: str = None
-    data: WebhookPayloadData = None
+    price: float = None
+    action: str = None
+    capital_percent: float = None
+    trigger_type: str = None
+    comment: str = None
+    order_id: str = None
     secret: str = None
 
 @app.post("/webhook")
@@ -117,18 +118,32 @@ async def webhook_handler(payload: WebhookPayload):
     event = payload.signal_type
     equity = payload.equity
     drawdown = None
-    action = payload.data.action if payload.data else ""
+    action = payload.action or ""
+    symbol = payload.symbol or "ETHUSDT"
+    qty = 0.0
+
+    if payload.price and payload.capital_percent:
+        qty = round((equity * payload.capital_percent / 100) / payload.price, 3)
 
     try:
         with open(log_json_path, "r+") as f:
             logs = json.load(f)
+
+            # ✅ 防重複單邏輯（根據 order_id）
+            if any(log.get("order_id") == payload.order_id for log in logs if payload.order_id):
+                print(f"[⚠️ 重複訊號] 已處理過的 order_id：{payload.order_id}")
+                return {"status": "duplicate", "order_id": payload.order_id}
+
             logs.append({
                 "timestamp": timestamp,
                 "strategy_id": sid,
                 "event": event,
                 "equity": equity,
                 "drawdown": drawdown,
-                "order_action": action
+                "order_action": action,
+                "trigger_type": payload.trigger_type,
+                "comment": payload.comment,
+                "order_id": payload.order_id
             })
             f.seek(0)
             json.dump(logs, f, indent=2)
@@ -136,95 +151,15 @@ async def webhook_handler(payload: WebhookPayload):
     except Exception as e:
         print(f"[⚠️ log.json 寫入失敗]：{e}")
 
-    write_to_gsheet(timestamp, sid, event, equity, drawdown, action)
+    write_to_gsheet(timestamp, sid, event, equity, drawdown, action, payload.trigger_type, payload.comment, payload.order_id)
 
-    # ✅ 自動下單
-    if event in ["entry_long", "entry_short"] and payload.data:
-        if action and payload.symbol and payload.data.position_size > 0:
-            side = "Buy" if action == "buy" else "Sell"
-            try:
-                result = await place_order(payload.symbol, side, payload.data.position_size)
-                print("[✅ 已執行下單]", result)
-            except Exception as e:
-                print("[⚠️ 下單失敗]", e)
+    if event in ["entry_long", "entry_short"] and qty > 0:
+        side = "Buy" if action == "buy" else "Sell"
+        try:
+            result = await place_order(symbol, side, qty)
+            print("[✅ 已執行下單]", result)
+        except Exception as e:
+            print("[⚠️ 下單失敗]", e)
 
-    await push_line_message(f"✅ 策略 {sid} 收到訊號：{event}，動作：{action}")
+    await push_line_message(f"✅ 策略 {sid} 收到訊號：{event}，動作：{action}\n{payload.comment or ''}")
     return {"status": "ok", "strategy_id": sid}
-
-# ✅ 健康檢查路由，支援 GET 與 HEAD 請求（避免 405 錯誤）
-# 📌 給 UptimeRobot 使用，保持 Render Server 醒著
-# 📌 不寫入 log、不發 LINE 通知、不與 TV webhook 混用
-
-@app.api_route("/healthcheck", methods=["GET", "HEAD"])
-async def healthcheck():
-    return {"status": "server is running"}
-    
-@app.get("/test_line")
-async def test_line():
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    strategy_id = "TEST_LINE"
-    event = "test_line_triggered"
-    write_to_gsheet(timestamp, strategy_id, event)
-    await push_line_message("📢 測試訊息：LINE 通知測試成功！")
-    return {"status": "ok"}
-
-@app.get("/logs_dashboard", response_class=HTMLResponse)
-async def show_logs_dashboard(request: Request):
-    try:
-        with open("log/log.json", "r") as f:
-            records = json.load(f)
-    except Exception as e:
-        print(f"[⚠️ log.json 載入失敗]：{e}")
-        records = []
-
-    try:
-        strategy_counts = collections.Counter(r["strategy_id"].split("_")[0] + "_" + r["strategy_id"].split("_")[1] for r in records)
-        win_count = sum(1 for r in records if r["event"] == "order_sent")
-        total_orders = sum(1 for r in records if r["event"] in ["entry_long", "entry_short"])
-        win_rate = (win_count / total_orders * 100) if total_orders else 0
-
-        mdd_list = [r["drawdown"] for r in records if r["drawdown"] is not None]
-        equity_list = [r["equity"] for r in records if r["equity"] is not None]
-
-        if mdd_list:
-            plt.figure(figsize=(4, 3))
-            plt.hist(mdd_list, bins=10)
-            plt.title("MDD 分佈圖")
-            plt.tight_layout()
-            plt.savefig("static/mdd_distribution.png")
-        else:
-            print("[⚠️ MDD 無資料]")
-
-        if equity_list:
-            plt.figure(figsize=(4, 3))
-            plt.plot(equity_list)
-            plt.title("Equity 曲線")
-            plt.tight_layout()
-            plt.savefig("static/equity_curve.png")
-        else:
-            print("[⚠️ Equity 無資料]")
-
-        plt.figure(figsize=(3, 3))
-        plt.bar(["Win Rate"], [win_rate])
-        plt.title(f"Win Rate: {win_rate:.1f}%")
-        plt.ylim(0, 100)
-        plt.tight_layout()
-        plt.savefig("static/win_rate.png")
-    except Exception as e:
-        print("[⚠️ 圖表產生失敗]", e)
-
-    return templates.TemplateResponse("logs_dashboard.html", {"request": request, "records": records, "seen_ids": []})
-
-@app.get("/download/log.json")
-def download_log():
-    return FileResponse("log/log.json", media_type="application/json", filename="log.json")
-
-@app.post("/reset_strategy")
-async def reset_strategy(strategy_id: str = Form(...), reset_secret: str = Form(...)):
-    expected_secret = os.getenv("RESET_SECRET", "letmein")
-    if reset_secret != expected_secret:
-        return HTMLResponse(content="<h1>密碼錯誤，請重新輸入。</h1>", status_code=403)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    write_to_gsheet(timestamp, strategy_id, "manual_reset")
-    await push_line_message(f"🔁 手動重置策略：{strategy_id}")
-    return RedirectResponse(url="/logs_dashboard", status_code=302)
