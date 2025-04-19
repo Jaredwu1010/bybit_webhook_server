@@ -161,6 +161,9 @@ async def test_line():
     await push_line_message("📢 測試訊息：LINE 通知測試成功！")
     return {"status": "ok"}
 
+# ✅ 健康檢查用路由，專供 UptimeRobot 等監控工具使用
+# 📌 不會觸發下單、不會寫入 log、不會發送 LINE 通知
+# 📌 目的：定期被 ping，讓 Render Server 維持在線狀態
 @app.get("/healthcheck")
 async def healthcheck():
     return {"status": "server is running"}
