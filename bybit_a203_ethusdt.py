@@ -28,6 +28,17 @@ if not Path(log_json_path).exists():
     with open(log_json_path, "w") as f:
         json.dump([], f)
 
+# ✅ 預先產生靜態圖，避免 logs_dashboard 載入時圖片 404
+for fname in ["mdd_distribution.png", "equity_curve.png", "win_rate.png"]:
+    fpath = Path(f"static/{fname}")
+    if not fpath.exists():
+        plt.figure(figsize=(3, 2))
+        plt.text(0.5, 0.5, "No Data", fontsize=12, ha="center")
+        plt.axis("off")
+        plt.tight_layout()
+        plt.savefig(fpath)
+        plt.close()
+
 SHEET_URL = os.getenv("GOOGLE_SHEET_URL")
 sheet = None
 try:
@@ -110,6 +121,16 @@ class WebhookPayload(BaseModel):
     data: WebhookPayloadData = None
     secret: str = None
 
+# ✅ 新增 LINE Callback 接收模組（放在 /webhook 前面）
+@app.post("/line_callback")
+async def line_callback(request: Request):
+    try:
+        payload = await request.json()
+        print("[📩 LINE Callback 收到資料]", json.dumps(payload, indent=2))
+    except Exception as e:
+        print("[⚠️ LINE Callback 處理失敗]", e)
+    return {"status": "received"}
+    
 @app.post("/webhook")
 async def webhook_handler(payload: WebhookPayload):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -220,11 +241,26 @@ def download_log():
     return FileResponse("log/log.json", media_type="application/json", filename="log.json")
 
 @app.post("/reset_strategy")
-async def reset_strategy(strategy_id: str = Form(...), reset_secret: str = Form(...)):
+async def reset_strategy(request: Request):
     expected_secret = os.getenv("RESET_SECRET", "letmein")
-    if reset_secret != expected_secret:
-        return HTMLResponse(content="<h1>密碼錯誤，請重新輸入。</h1>", status_code=403)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    write_to_gsheet(timestamp, strategy_id, "manual_reset")
-    await push_line_message(f"🔁 手動重置策略：{strategy_id}")
-    return RedirectResponse(url="/logs_dashboard", status_code=302)
+
+    try:
+        if request.headers.get("content-type", "").startswith("application/json"):
+            data = await request.json()
+            strategy_id = data.get("strategy_id")
+            reset_secret = data.get("reset_secret")
+        else:
+            form = await request.form()
+            strategy_id = form.get("strategy_id")
+            reset_secret = form.get("reset_secret")
+
+        if reset_secret != expected_secret:
+            return HTMLResponse(content="<h1>密碼錯誤，請重新輸入。</h1>", status_code=403)
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        write_to_gsheet(timestamp, strategy_id, "manual_reset")
+        await push_line_message(f"🔁 手動重置策略：{strategy_id}")
+        return RedirectResponse(url="/logs_dashboard", status_code=302)
+    except Exception as e:
+        print("[⚠️ Reset Strategy 處理失敗]", e)
+        return HTMLResponse(content="<h1>內部錯誤</h1>", status_code=500)
