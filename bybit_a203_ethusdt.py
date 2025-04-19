@@ -404,19 +404,12 @@ async def settings_dashboard():
 
             async function testReset() {{
                 document.getElementById('result').innerText = "🔁 傳送重置指令中...";
-                const form = new FormData();
-                form.append("strategy_id", "TEST_STRATEGY");
-                form.append("reset_secret", "letmein");
-
-                const res = await fetch("/reset_strategy", {{
-                    method: "POST",
-                    body: form
-                }});
-                const text = await res.text();
-                if (res.status === 302 || text.includes("logs_dashboard")) {{
+                const res = await fetch("/trigger_reset", {{ method: "POST" }});
+                const data = await res.json();
+                if (data.status === "success") {{
                     document.getElementById('result').innerText = "✅ 策略重置成功！";
                 }} else {{
-                    document.getElementById('result').innerText = "❌ 重置失敗：" + text;
+                    document.getElementById('result').innerText = "❌ 重置失敗：" + JSON.stringify(data);
                 }}
             }}
         </script>
@@ -425,3 +418,22 @@ async def settings_dashboard():
     """
     return HTMLResponse(content=html)
 
+@app.post("/trigger_reset")
+async def trigger_reset():
+    strategy_id = "TEST_STRATEGY"
+    reset_secret = os.getenv("RESET_SECRET", "letmein")
+
+    form = {
+        "strategy_id": strategy_id,
+        "reset_secret": reset_secret,
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.post("http://localhost:10000/reset_strategy", data=form)
+            if res.status_code == 302 or "logs_dashboard" in res.text:
+                return {"status": "success"}
+            else:
+                return {"status": "failed", "detail": res.text}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
