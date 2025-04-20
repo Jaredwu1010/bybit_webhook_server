@@ -146,7 +146,58 @@ async def line_callback(request: Request):
     except Exception as e:
         print("[⚠️ LINE Callback 處理失敗]", e)
     return {"status": "received"}
+
+# ✅ 新增 TradingView Webhook 專用入口
+@app.post("/tv_webhook")
+async def tv_webhook(request: Request):
+    try:
+        payload = await request.json()
+
+        strategy_id = payload.get("strategy_id")
+        order_id = payload.get("order_id")
+        action = infer_action_from_order_id(order_id)
+        symbol = payload.get("symbol")
+        price = float(payload.get("price"))
+        capital_percent = float(payload.get("capital_percent"))
+        trigger_type = payload.get("trigger_type")
+        time = payload.get("time")
+
+        print(f"✅ [TV Webhook] {strategy_id} | {order_id} | {symbol}@{price} | {capital_percent}%")
+
+        # 👉 送單（可改成 async place_order()）
+        await place_order(symbol, action.upper(), capital_percent)
+
+        # 👉 寫入 log.json（與你原本的格式一致）
+        with open(log_json_path, "r+") as f:
+            logs = json.load(f)
+            logs.append({
+                "timestamp": time,
+                "strategy_id": strategy_id,
+                "event": order_id,
+                "equity": None,
+                "drawdown": None,
+                "order_action": action
+            })
+            f.seek(0)
+            json.dump(logs, f, indent=2)
+
+        # 👉 寫入 Google Sheet（如有需要）
+        write_to_gsheet(time, strategy_id, order_id, None, None, action)
+
+        return {"status": "ok", "message": "tv webhook received"}
     
+    except Exception as e:
+        print(f"[⚠️ TV Webhook 錯誤]：{e}")
+        return {"status": "error", "message": str(e)}
+
+# 🧠 判斷動作方向
+def infer_action_from_order_id(order_id: str):
+    if "long" in order_id:
+        return "Buy"
+    elif "short" in order_id:
+        return "Sell"
+    return "unknown"
+
 @app.post("/webhook")
 async def webhook_handler(payload: WebhookPayload):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
