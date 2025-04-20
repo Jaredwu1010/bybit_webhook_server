@@ -147,12 +147,20 @@ async def line_callback(request: Request):
         print("[⚠️ LINE Callback 處理失敗]", e)
     return {"status": "received"}
 
-# ✅ 新增 TradingView Webhook 專用入口
+# ✅ 新增 TradingView Webhook+Secret 專用入口
 @app.post("/tv_webhook")
 async def tv_webhook(request: Request):
     try:
         payload = await request.json()
 
+        # ✅ Webhook secret 驗證（來自 .env 或 Render secret）
+        expected_secret = os.getenv("WEBHOOK_SECRET", "letmein")
+        received_secret = payload.get("secret", "")
+        if received_secret != expected_secret:
+            print("❌ Webhook secret 驗證失敗")
+            return {"status": "unauthorized", "message": "invalid secret"}
+
+        # ✅ 正常流程處理
         strategy_id = payload.get("strategy_id")
         order_id = payload.get("order_id")
         action = infer_action_from_order_id(order_id)
@@ -164,10 +172,8 @@ async def tv_webhook(request: Request):
 
         print(f"✅ [TV Webhook] {strategy_id} | {order_id} | {symbol}@{price} | {capital_percent}%")
 
-        # 👉 送單（可改成 async place_order()）
         await place_order(symbol, action.upper(), capital_percent)
 
-        # 👉 寫入 log.json（與你原本的格式一致）
         with open(log_json_path, "r+") as f:
             logs = json.load(f)
             logs.append({
@@ -181,7 +187,6 @@ async def tv_webhook(request: Request):
             f.seek(0)
             json.dump(logs, f, indent=2)
 
-        # 👉 寫入 Google Sheet（如有需要）
         write_to_gsheet(time, strategy_id, order_id, None, None, action)
 
         return {"status": "ok", "message": "tv webhook received"}
