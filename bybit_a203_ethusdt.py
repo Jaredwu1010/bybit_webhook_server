@@ -6,6 +6,7 @@ from pydantic import BaseModel
 import httpx
 import os
 import json
+import asyncio
 import gspread
 import matplotlib.pyplot as plt
 from google.oauth2.service_account import Credentials
@@ -148,31 +149,132 @@ async def line_callback(request: Request):
     return {"status": "received"}
 
 # ✅ 新增 TradingView Webhook+Secret 專用入口
+@app.get("/equity_status")
+async def equity_status():
+    try:
+        async def get_equity():
+            try:
+                api_key = os.getenv("BYBIT_API_KEY")
+                api_secret = os.getenv("BYBIT_API_SECRET")
+                base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
+                endpoint = f"{base_url}/v5/account/wallet-balance"
+
+                timestamp = str(int(time.time() * 1000))
+                recv_window = "5000"
+                sign_str = timestamp + api_key + recv_window
+                signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+                headers = {
+                    "X-BAPI-API-KEY": api_key,
+                    "X-BAPI-TIMESTAMP": timestamp,
+                    "X-BAPI-RECV-WINDOW": recv_window,
+                    "X-BAPI-SIGN": signature
+                }
+
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(endpoint, headers=headers)
+                    data = response.json()
+                    usdt_balance = float(data["result"]["list"][0]["totalEquity"])
+                    return {"status": "ok", "equity": usdt_balance}
+            except Exception as e:
+                fallback = float(os.getenv("EQUITY_FALLBACK", "100"))
+                return {"status": "fallback", "equity": fallback, "error": str(e)}
+
+        return await get_equity()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+import asyncio
+
+@app.get("/equity_status")
+async def equity_status():
+    try:
+        async def get_equity():
+            try:
+                api_key = os.getenv("BYBIT_API_KEY")
+                api_secret = os.getenv("BYBIT_API_SECRET")
+                base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
+                endpoint = f"{base_url}/v5/account/wallet-balance"
+
+                timestamp = str(int(time.time() * 1000))
+                recv_window = "5000"
+                sign_str = timestamp + api_key + recv_window
+                signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+                headers = {
+                    "X-BAPI-API-KEY": api_key,
+                    "X-BAPI-TIMESTAMP": timestamp,
+                    "X-BAPI-RECV-WINDOW": recv_window,
+                    "X-BAPI-SIGN": signature
+                }
+
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(endpoint, headers=headers)
+                    data = response.json()
+                    usdt_balance = float(data["result"]["list"][0]["totalEquity"])
+                    return {"status": "ok", "equity": usdt_balance}
+            except Exception as e:
+                fallback = float(os.getenv("EQUITY_FALLBACK", "100"))
+                return {"status": "fallback", "equity": fallback, "error": str(e)}
+
+        return await get_equity()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @app.post("/tv_webhook")
 async def tv_webhook(request: Request):
     try:
         payload = await request.json()
 
-        # ✅ Webhook secret 驗證（來自 .env 或 Render secret）
         expected_secret = os.getenv("WEBHOOK_SECRET", "letmein")
         received_secret = payload.get("secret", "")
         if received_secret != expected_secret:
             print("❌ Webhook secret 驗證失敗")
             return {"status": "unauthorized", "message": "invalid secret"}
 
-        # ✅ 正常流程處理
         strategy_id = payload.get("strategy_id")
         order_id = payload.get("order_id")
-        action = infer_action_from_order_id(order_id)
+        action = "Buy" if "long" in order_id else "Sell"
         symbol = payload.get("symbol")
-        price = float(payload.get("price"))
-        capital_percent = float(payload.get("capital_percent"))
+        price_str = payload.get("price")
+        price = float(price_str) if price_str is not None else 0.0
+        capital_percent = float(payload.get("capital_percent", 0))
         trigger_type = payload.get("trigger_type")
         time = payload.get("time")
 
-        print(f"✅ [TV Webhook] {strategy_id} | {order_id} | {symbol}@{price} | {capital_percent}%")
+        if price <= 0 or capital_percent <= 0:
+            print("❌ 無效的 price 或 capital_percent")
+            return {"status": "error", "message": "Invalid price or capital_percent"}
 
-        await place_order(symbol, action.upper(), 0.01)
+        async def get_equity():
+            try:
+                api_key = os.getenv("BYBIT_API_KEY")
+                api_secret = os.getenv("BYBIT_API_SECRET")
+                base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
+                endpoint = f"{base_url}/v5/account/wallet-balance"
+
+                timestamp = str(int(time.time() * 1000))
+                recv_window = "5000"
+                sign_str = timestamp + api_key + recv_window
+                signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+                headers = {
+                    "X-BAPI-API-KEY": api_key,
+                    "X-BAPI-TIMESTAMP": timestamp,
+                    "X-BAPI-RECV-WINDOW": recv_window,
+                    "X-BAPI-SIGN": signature
+                }
+
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(endpoint, headers=headers)
+                    data = response.json()
+                    usdt_balance = float(data["result"]["list"][0]["totalEquity"])
+                    return usdt_balance
+            except Exception as e:
+                print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
+                fallback = float(os.getenv("EQUITY_FALLBACK", "100"))
+                return fallback
+
+        equity = await get_equity()
+        qty = (equity * capital_percent / 100) / price
+
+        await place_order(symbol, action, qty)
 
         with open(log_json_path, "r+") as f:
             logs = json.load(f)
@@ -180,20 +282,100 @@ async def tv_webhook(request: Request):
                 "timestamp": time,
                 "strategy_id": strategy_id,
                 "event": order_id,
-                "equity": None,
+                "equity": equity,
                 "drawdown": None,
                 "order_action": action
             })
             f.seek(0)
             json.dump(logs, f, indent=2)
 
-        write_to_gsheet(time, strategy_id, order_id, None, None, action)
+        write_to_gsheet(time, strategy_id, order_id, equity, None, action)
 
         return {"status": "ok", "message": "tv webhook received"}
-    
+
     except Exception as e:
         print(f"[⚠️ TV Webhook 錯誤]：{e}")
         return {"status": "error", "message": str(e)}
+
+@app.post("/tv_webhook")
+async def tv_webhook(request: Request):
+    try:
+        payload = await request.json()
+
+        expected_secret = os.getenv("WEBHOOK_SECRET", "letmein")
+        received_secret = payload.get("secret", "")
+        if received_secret != expected_secret:
+            print("❌ Webhook secret 驗證失敗")
+            return {"status": "unauthorized", "message": "invalid secret"}
+
+        strategy_id = payload.get("strategy_id")
+        order_id = payload.get("order_id")
+        action = "Buy" if "long" in order_id else "Sell"
+        symbol = payload.get("symbol")
+        price_str = payload.get("price")
+        price = float(price_str) if price_str is not None else 0.0
+        capital_percent = float(payload.get("capital_percent", 0))
+        trigger_type = payload.get("trigger_type")
+        time = payload.get("time")
+
+        if price <= 0 or capital_percent <= 0:
+            print("❌ 無效的 price 或 capital_percent")
+            return {"status": "error", "message": "Invalid price or capital_percent"}
+
+        async def get_equity():
+            try:
+                api_key = os.getenv("BYBIT_API_KEY")
+                api_secret = os.getenv("BYBIT_API_SECRET")
+                base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
+                endpoint = f"{base_url}/v5/account/wallet-balance"
+
+                timestamp = str(int(time.time() * 1000))
+                recv_window = "5000"
+                sign_str = timestamp + api_key + recv_window
+                signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+                headers = {
+                    "X-BAPI-API-KEY": api_key,
+                    "X-BAPI-TIMESTAMP": timestamp,
+                    "X-BAPI-RECV-WINDOW": recv_window,
+                    "X-BAPI-SIGN": signature
+                }
+
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(endpoint, headers=headers)
+                    data = response.json()
+                    usdt_balance = float(data["result"]["list"][0]["totalEquity"])
+                    return usdt_balance
+            except Exception as e:
+                print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
+                fallback = float(os.getenv("EQUITY_FALLBACK", "100"))
+                return fallback
+
+        equity = await get_equity()
+        qty = (equity * capital_percent / 100) / price
+
+        await place_order(symbol, action, qty)
+
+        with open(log_json_path, "r+") as f:
+            logs = json.load(f)
+            logs.append({
+                "timestamp": time,
+                "strategy_id": strategy_id,
+                "event": order_id,
+                "equity": equity,
+                "drawdown": None,
+                "order_action": action
+            })
+            f.seek(0)
+            json.dump(logs, f, indent=2)
+
+        write_to_gsheet(time, strategy_id, order_id, equity, None, action)
+
+        return {"status": "ok", "message": "tv webhook received"}
+
+    except Exception as e:
+        print(f"[⚠️ TV Webhook 錯誤]：{e}")
+        return {"status": "error", "message": str(e)}
+
 
 @app.post("/tv_webhook_test")
 async def tv_webhook_test(request: Request):
