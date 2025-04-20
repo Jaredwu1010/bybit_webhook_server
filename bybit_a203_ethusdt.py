@@ -196,7 +196,7 @@ async def tv_webhook(request: Request):
         price = float(price_str) if price_str is not None else 0.0
         capital_percent = float(payload.get("capital_percent", 0))
         trigger_type = payload.get("trigger_type")
-        time = payload.get("time")
+        timestamp_str = payload.get("time")
 
         if price <= 0 or capital_percent <= 0:
             print("❌ 無效的 price 或 capital_percent")
@@ -234,7 +234,7 @@ async def tv_webhook(request: Request):
         with open(log_json_path, "r+") as f:
             logs = json.load(f)
             logs.append({
-                "timestamp": time,
+                "timestamp": timestamp_str,
                 "strategy_id": strategy_id,
                 "event": order_id,
                 "equity": equity,
@@ -244,7 +244,7 @@ async def tv_webhook(request: Request):
             f.seek(0)
             json.dump(logs, f, indent=2)
 
-        write_to_gsheet(time, strategy_id, order_id, equity, None, action)
+        write_to_gsheet(timestamp_str, strategy_id, order_id, equity, None, action)
 
         return {"status": "ok", "message": "tv webhook received"}
 
