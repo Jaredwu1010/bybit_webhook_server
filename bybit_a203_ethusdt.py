@@ -152,36 +152,30 @@ async def line_callback(request: Request):
 @app.get("/equity_status")
 async def equity_status():
     try:
-        async def get_equity():
-            try:
-                api_key = os.getenv("BYBIT_API_KEY")
-                api_secret = os.getenv("BYBIT_API_SECRET")
-                base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
-                endpoint = f"{base_url}/v5/account/wallet-balance"
+        api_key = os.getenv("BYBIT_API_KEY")
+        api_secret = os.getenv("BYBIT_API_SECRET")
+        base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
+        endpoint = f"{base_url}/v5/account/wallet-balance"
 
-                timestamp = str(int(time.time() * 1000))
-                recv_window = "5000"
-                sign_str = timestamp + api_key + recv_window
-                signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
-                headers = {
-                    "X-BAPI-API-KEY": api_key,
-                    "X-BAPI-TIMESTAMP": timestamp,
-                    "X-BAPI-RECV-WINDOW": recv_window,
-                    "X-BAPI-SIGN": signature
-                }
+        timestamp = str(int(time.time() * 1000))
+        recv_window = "5000"
+        sign_str = timestamp + api_key + recv_window
+        signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+        headers = {
+            "X-BAPI-API-KEY": api_key,
+            "X-BAPI-TIMESTAMP": timestamp,
+            "X-BAPI-RECV-WINDOW": recv_window,
+            "X-BAPI-SIGN": signature
+        }
 
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(endpoint, headers=headers)
-                    data = response.json()
-                    usdt_balance = float(data["result"]["list"][0]["totalEquity"])
-                    return {"status": "ok", "equity": usdt_balance}
-            except Exception as e:
-                fallback = float(os.getenv("EQUITY_FALLBACK", "100"))
-                return {"status": "fallback", "equity": fallback, "error": str(e)}
-
-        return await get_equity()
+        async with httpx.AsyncClient() as client:
+            response = await client.get(endpoint, headers=headers)
+            data = response.json()
+            usdt_balance = float(data["result"]["list"][0]["totalEquity"])
+            return {"status": "ok", "equity": usdt_balance}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        fallback = float(os.getenv("EQUITY_FALLBACK", "100"))
+        return {"status": "fallback", "equity": fallback, "error": str(e)}
 
 @app.post("/tv_webhook")
 async def tv_webhook(request: Request):
@@ -208,35 +202,31 @@ async def tv_webhook(request: Request):
             print("❌ 無效的 price 或 capital_percent")
             return {"status": "error", "message": "Invalid price or capital_percent"}
 
-        async def get_equity():
-            try:
-                api_key = os.getenv("BYBIT_API_KEY")
-                api_secret = os.getenv("BYBIT_API_SECRET")
-                base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
-                endpoint = f"{base_url}/v5/account/wallet-balance"
+        api_key = os.getenv("BYBIT_API_KEY")
+        api_secret = os.getenv("BYBIT_API_SECRET")
+        base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
+        endpoint = f"{base_url}/v5/account/wallet-balance"
 
-                timestamp = str(int(time.time() * 1000))
-                recv_window = "5000"
-                sign_str = timestamp + api_key + recv_window
-                signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
-                headers = {
-                    "X-BAPI-API-KEY": api_key,
-                    "X-BAPI-TIMESTAMP": timestamp,
-                    "X-BAPI-RECV-WINDOW": recv_window,
-                    "X-BAPI-SIGN": signature
-                }
+        timestamp = str(int(time.time() * 1000))
+        recv_window = "5000"
+        sign_str = timestamp + api_key + recv_window
+        signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+        headers = {
+            "X-BAPI-API-KEY": api_key,
+            "X-BAPI-TIMESTAMP": timestamp,
+            "X-BAPI-RECV-WINDOW": recv_window,
+            "X-BAPI-SIGN": signature
+        }
 
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(endpoint, headers=headers)
-                    data = response.json()
-                    usdt_balance = float(data["result"]["list"][0]["totalEquity"])
-                    return usdt_balance
-            except Exception as e:
-                print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
-                fallback = float(os.getenv("EQUITY_FALLBACK", "100"))
-                return fallback
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(endpoint, headers=headers)
+                data = response.json()
+                equity = float(data["result"]["list"][0]["totalEquity"])
+        except Exception as e:
+            print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
+            equity = float(os.getenv("EQUITY_FALLBACK", "100"))
 
-        equity = await get_equity()
         qty = (equity * capital_percent / 100) / price
 
         await place_order(symbol, action, qty)
