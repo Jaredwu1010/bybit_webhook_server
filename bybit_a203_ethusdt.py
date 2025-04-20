@@ -195,6 +195,55 @@ async def tv_webhook(request: Request):
         print(f"[⚠️ TV Webhook 錯誤]：{e}")
         return {"status": "error", "message": str(e)}
 
+@app.post("/tv_webhook_test")
+async def tv_webhook_test(request: Request):
+    try:
+        payload = await request.json()
+
+        # ✅ Secret 驗證
+        expected_secret = os.getenv("WEBHOOK_SECRET", "letmein")
+        received_secret = payload.get("secret", "")
+        if received_secret != expected_secret:
+            print("❌ Webhook secret 驗證失敗")
+            return {"status": "unauthorized", "message": "invalid secret"}
+
+        # ✅ 正常 webhook 資訊提取
+        strategy_id = payload.get("strategy_id")
+        order_id = payload.get("order_id")
+        action = "Buy" if "long" in order_id else "Sell"
+        symbol = payload.get("symbol")
+        price = float(payload.get("price"))
+        trigger_type = payload.get("trigger_type")
+        time = payload.get("time")
+
+        print(f"🧪 [TV 測試 Webhook] {strategy_id} | {order_id} | {symbol}@{price} | qty=0.01")
+
+        # ✅ 固定 0.01 下單
+        await place_order(symbol, action, 0.01)
+
+        # ✅ log.json 記錄
+        with open(log_json_path, "r+") as f:
+            logs = json.load(f)
+            logs.append({
+                "timestamp": time,
+                "strategy_id": strategy_id,
+                "event": order_id + "_test",
+                "equity": None,
+                "drawdown": None,
+                "order_action": action
+            })
+            f.seek(0)
+            json.dump(logs, f, indent=2)
+
+        # ✅ Google Sheets
+        write_to_gsheet(time, strategy_id, order_id + "_test", None, None, action)
+
+        return {"status": "ok", "message": "tv_webhook_test received"}
+    
+    except Exception as e:
+        print(f"[⚠️ TV 測試 webhook 錯誤]：{e}")
+        return {"status": "error", "message": str(e)}
+
 # 🧠 判斷動作方向
 def infer_action_from_order_id(order_id: str):
     if "long" in order_id:
