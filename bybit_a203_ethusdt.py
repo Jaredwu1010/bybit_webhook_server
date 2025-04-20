@@ -172,7 +172,7 @@ async def tv_webhook(request: Request):
 
         print(f"✅ [TV Webhook] {strategy_id} | {order_id} | {symbol}@{price} | {capital_percent}%")
 
-        await place_order(symbol, action.upper(), capital_percent)
+        await place_order(symbol, action.upper(), 0.01)
 
         with open(log_json_path, "r+") as f:
             logs = json.load(f)
