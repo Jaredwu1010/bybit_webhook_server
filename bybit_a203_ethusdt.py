@@ -207,9 +207,10 @@ async def tv_webhook(request: Request):
         trigger_type = payload.get("trigger_type")
         comment = payload.get("comment", "")
         contracts = payload.get("contracts", None)
+        symbol = payload.get("symbol", "")
+        if symbol.endswith(".P"):
+            symbol = symbol.replace(".P", "")  # ✅ 修正測試網合約名稱
         action = "Buy" if "long" in order_id else "Sell"
-        symbol = payload.get("symbol")
-        symbol = symbol.replace(".P", "")  # ⬅️ 移除 TradingView 傳來的 .P
         price_str = payload.get("price")
         price = float(price_str) if price_str is not None else 0.0
         capital_percent = float(payload.get("capital_percent", 0))
@@ -244,14 +245,16 @@ async def tv_webhook(request: Request):
 
             usdt_info = next((c for c in data["result"]["list"][0]["coin"] if c["coin"] == "USDT"), None)
             if usdt_info:
-                print(f"👉 totalAvailableBalance={usdt_info.get('totalAvailableBalance')}, availableToWithdraw={usdt_info.get('availableToWithdraw')}, equity={usdt_info.get('equity')}")
-                balance_fields = [
-                    usdt_info.get("totalAvailableBalance"),
-                    usdt_info.get("availableToWithdraw"),
+                equity_str = (
+                    usdt_info.get("totalAvailableBalance") or
+                    usdt_info.get("availableToWithdraw") or
                     usdt_info.get("equity")
-                ]
-                equity_str = next((b for b in balance_fields if b not in [None, ""]), None)
-                equity = float(equity_str) if equity_str else float(os.getenv("EQUITY_FALLBACK", "100"))
+                )
+                if equity_str not in ["", None]:
+                    equity = float(equity_str)
+                else:
+                    print("[⚠️ USDT 欄位皆為空，使用預設值]")
+                    equity = float(os.getenv("EQUITY_FALLBACK", "100"))
             else:
                 print("[⚠️ 找不到 USDT 資產資料，使用預設值]")
                 equity = float(os.getenv("EQUITY_FALLBACK", "100"))
@@ -263,6 +266,7 @@ async def tv_webhook(request: Request):
         qty = (equity * capital_percent / 100) / price
         qty = round(qty, 2)
         print(f"[📦 下單資訊] equity={equity} capital%={capital_percent} price={price} qty={qty}")
+        print(f"👉 totalAvailableBalance={usdt_info.get('totalAvailableBalance')} availableToWithdraw={usdt_info.get('availableToWithdraw')} equity={usdt_info.get('equity')}")
 
         min_qty = 0.01
         if qty < min_qty:
