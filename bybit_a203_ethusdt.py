@@ -243,16 +243,14 @@ async def tv_webhook(request: Request):
 
             usdt_info = next((c for c in data["result"]["list"][0]["coin"] if c["coin"] == "USDT"), None)
             if usdt_info:
-                equity_str = (
-                    usdt_info.get("totalAvailableBalance") or
-                    usdt_info.get("availableToWithdraw") or
+                print(f"👉 totalAvailableBalance={usdt_info.get('totalAvailableBalance')}, availableToWithdraw={usdt_info.get('availableToWithdraw')}, equity={usdt_info.get('equity')}")
+                balance_fields = [
+                    usdt_info.get("totalAvailableBalance"),
+                    usdt_info.get("availableToWithdraw"),
                     usdt_info.get("equity")
-                )
-                if equity_str not in ["", None]:
-                    equity = float(equity_str)
-                else:
-                    print("[⚠️ USDT 欄位皆為空，使用預設值]")
-                    equity = float(os.getenv("EQUITY_FALLBACK", "100"))
+                ]
+                equity_str = next((b for b in balance_fields if b not in [None, ""]), None)
+                equity = float(equity_str) if equity_str else float(os.getenv("EQUITY_FALLBACK", "100"))
             else:
                 print("[⚠️ 找不到 USDT 資產資料，使用預設值]")
                 equity = float(os.getenv("EQUITY_FALLBACK", "100"))
