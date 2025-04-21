@@ -217,6 +217,7 @@ async def tv_webhook(request: Request):
             print("❌ 無效的 price 或 capital_percent")
             return {"status": "error", "message": "Invalid price or capital_percent"}
 
+        # ✅ 抓取帳戶資金資訊
         api_key = os.getenv("BYBIT_API_KEY")
         api_secret = os.getenv("BYBIT_API_SECRET")
         base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
@@ -241,16 +242,21 @@ async def tv_webhook(request: Request):
                 print("[📦 Bybit API 回傳]", data)
 
             usdt_info = next((c for c in data["result"]["list"][0]["coin"] if c["coin"] == "USDT"), None)
-            if usdt_info and usdt_info.get("availableToWithdraw", "") not in ["", None]:
-                equity = float(usdt_info["availableToWithdraw"])
+            if usdt_info:
+                equity_str = usdt_info.get("availableToWithdraw") or usdt_info.get("totalAvailableBalance") or usdt_info.get("equity")
+                if equity_str:
+                    equity = float(equity_str)
+                else:
+                    print("[⚠️ 無法取得 USDT 資產欄位，使用預設值]")
+                    equity = float(os.getenv("EQUITY_FALLBACK", "100"))
             else:
-                print("[⚠️ 無法取得 availableToWithdraw，使用預設值]")
+                print("[⚠️ 無 USDT 資訊，使用預設值]")
                 equity = float(os.getenv("EQUITY_FALLBACK", "100"))
-
         except Exception as e:
             print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
             equity = float(os.getenv("EQUITY_FALLBACK", "100"))
 
+        # ✅ 計算下單數量
         qty = (equity * capital_percent / 100) / price
         qty = round(qty, 2)
         print(f"[📦 下單資訊] equity={equity} capital%={capital_percent} price={price} qty={qty}")
@@ -271,6 +277,7 @@ async def tv_webhook(request: Request):
         ret_msg = order_result.get("retMsg")
         pnl = order_result.get("result", {}).get("cumRealisedPnl", None)  # 實際盈虧欄位
 
+        # ✅ 寫入 log.json
         with open(log_json_path, "r+") as f:
             logs = json.load(f)
             logs.append({
@@ -290,6 +297,7 @@ async def tv_webhook(request: Request):
             f.seek(0)
             json.dump(logs, f, indent=2)
 
+        # ✅ 寫入 Google Sheet
         write_to_gsheet(
             timestamp_str, strategy_id, order_id, equity, None, action,
             trigger_type, comment, contracts, ret_code, ret_msg, pnl
@@ -300,7 +308,6 @@ async def tv_webhook(request: Request):
     except Exception as e:
         print(f"[⚠️ TV Webhook 錯誤]：{e}")
         return {"status": "error", "message": str(e)}
-
 
 @app.post("/tv_webhook_test")
 async def tv_webhook_test(request: Request):
