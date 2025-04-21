@@ -229,6 +229,18 @@ async def tv_webhook(request: Request):
 
         qty = (equity * capital_percent / 100) / price
 
+        # 📌 Bybit ETH 最小下單單位為 0.01，因此四捨五入至小數點第 2 位
+qty = round(qty, 2)
+
+# 📌 Bybit 要求最小下單量為 0.01，過小會被拒單
+min_qty = 0.01
+if qty < min_qty:
+    print(f"[❌ Qty Too Small] qty={qty} 小於最小下單量 {min_qty}")
+    return {
+        "status": "error",
+        "message": f"下單失敗：qty={qty} 小於最小下單量 {min_qty}"
+    }
+
         await place_order(symbol, action, qty)
 
         with open(log_json_path, "r+") as f:
