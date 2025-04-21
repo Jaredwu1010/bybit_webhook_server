@@ -209,7 +209,8 @@ async def tv_webhook(request: Request):
 
         timestamp = str(int(time.time() * 1000))
         recv_window = "5000"
-        sign_str = timestamp + api_key + recv_window
+        query_string = "accountType=UNIFIED"  # 👈 必須加這一行！
+        sign_str = timestamp + api_key + recv_window + query_string  # 👈 修改為包含 query string
         signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
         headers = {
             "X-BAPI-API-KEY": api_key,
@@ -217,6 +218,7 @@ async def tv_webhook(request: Request):
             "X-BAPI-RECV-WINDOW": recv_window,
             "X-BAPI-SIGN": signature
         }
+
 
         try:
             async with httpx.AsyncClient() as client:
