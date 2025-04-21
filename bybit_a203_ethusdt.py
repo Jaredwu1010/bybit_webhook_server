@@ -50,10 +50,23 @@ try:
 except Exception as e:
     print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
 
-def write_to_gsheet(timestamp, strategy_id, event, equity=None, drawdown=None, order_action=None):
+def write_to_gsheet(timestamp, strategy_id, event, equity=None, drawdown=None, order_action=None, trigger_type=None, comment=None, contracts=None, ret_code=None, ret_msg=None, pnl=None):
     try:
         if sheet:
-            row = [timestamp, strategy_id, event, equity or '', drawdown or '', order_action or '']
+            row = [
+                timestamp,
+                strategy_id,
+                event,
+                equity or '',
+                drawdown or '',
+                order_action or '',
+                trigger_type or '',
+                comment or '',
+                contracts or '',
+                ret_code or '',
+                ret_msg or '',
+                pnl or ''
+            ]
             sheet.append_row(row)
             print("[✅ 已寫入 Google Sheets]")
     except Exception as e:
@@ -190,12 +203,14 @@ async def tv_webhook(request: Request):
 
         strategy_id = payload.get("strategy_id")
         order_id = payload.get("order_id")
+        trigger_type = payload.get("trigger_type")
+        comment = payload.get("comment", "")
+        contracts = payload.get("contracts", None)
         action = "Buy" if "long" in order_id else "Sell"
         symbol = payload.get("symbol")
         price_str = payload.get("price")
         price = float(price_str) if price_str is not None else 0.0
         capital_percent = float(payload.get("capital_percent", 0))
-        trigger_type = payload.get("trigger_type")
         timestamp_str = payload.get("time")
 
         if price <= 0 or capital_percent <= 0:
@@ -209,8 +224,8 @@ async def tv_webhook(request: Request):
 
         timestamp = str(int(time.time() * 1000))
         recv_window = "5000"
-        query_string = "accountType=UNIFIED"  # 👈 必須加這一行！
-        sign_str = timestamp + api_key + recv_window + query_string  # 👈 修改為包含 query string
+        query_string = "accountType=UNIFIED"
+        sign_str = timestamp + api_key + recv_window + query_string
         signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
         headers = {
             "X-BAPI-API-KEY": api_key,
@@ -224,15 +239,12 @@ async def tv_webhook(request: Request):
                 response = await client.get(endpoint, headers=headers)
                 data = response.json()
                 print("[📦 Bybit API 回傳]", data)
-            try:
-                usdt_info = next((c for c in data["result"]["list"][0]["coin"] if c["coin"] == "USDT"), None)
-                if usdt_info and "availableToWithdraw" in usdt_info:
-                    equity = float(usdt_info["availableToWithdraw"])
-                else:
-                    print("[⚠️ USDT 資訊缺失或格式錯誤]")
-                    equity = float(os.getenv("EQUITY_FALLBACK", "100"))
-            except Exception as e:
-                print("[⚠️ 解析 Bybit 回傳失敗]", e)
+
+            usdt_info = next((c for c in data["result"]["list"][0]["coin"] if c["coin"] == "USDT"), None)
+            if usdt_info and usdt_info.get("availableToWithdraw", "") not in ["", None]:
+                equity = float(usdt_info["availableToWithdraw"])
+            else:
+                print("[⚠️ 無法取得 availableToWithdraw，使用預設值]")
                 equity = float(os.getenv("EQUITY_FALLBACK", "100"))
 
         except Exception as e:
@@ -240,13 +252,9 @@ async def tv_webhook(request: Request):
             equity = float(os.getenv("EQUITY_FALLBACK", "100"))
 
         qty = (equity * capital_percent / 100) / price
-
+        qty = round(qty, 2)
         print(f"[📦 下單資訊] equity={equity} capital%={capital_percent} price={price} qty={qty}")
 
-        # 📌 Bybit ETH 最小下單單位為 0.01，因此四捨五入至小數點第 2 位
-        qty = round(qty, 2)
-
-        # 📌 Bybit 要求最小下單量為 0.01，過小會被拒單
         min_qty = 0.01
         if qty < min_qty:
             print(f"[❌ Qty Too Small] qty={qty} 小於最小下單量 {min_qty}")
@@ -256,29 +264,43 @@ async def tv_webhook(request: Request):
             }
 
         print("[🚀 正在送出下單請求...]")
-        await place_order(symbol, action, qty)
+        order_result = await place_order(symbol, action, qty)
         print("[✅ 已送出下單請求]")
-        
+
+        ret_code = order_result.get("retCode")
+        ret_msg = order_result.get("retMsg")
+        pnl = order_result.get("result", {}).get("cumRealisedPnl", None)  # 實際盈虧欄位
+
         with open(log_json_path, "r+") as f:
             logs = json.load(f)
             logs.append({
                 "timestamp": timestamp_str,
                 "strategy_id": strategy_id,
                 "event": order_id,
+                "trigger_type": trigger_type,
+                "comment": comment,
+                "contracts": contracts,
                 "equity": equity,
                 "drawdown": None,
-                "order_action": action
+                "order_action": action,
+                "ret_code": ret_code,
+                "ret_msg": ret_msg,
+                "pnl": pnl
             })
             f.seek(0)
             json.dump(logs, f, indent=2)
 
-        write_to_gsheet(timestamp_str, strategy_id, order_id, equity, None, action)
+        write_to_gsheet(
+            timestamp_str, strategy_id, order_id, equity, None, action,
+            trigger_type, comment, contracts, ret_code, ret_msg, pnl
+        )
 
         return {"status": "ok", "message": "tv webhook received"}
 
     except Exception as e:
         print(f"[⚠️ TV Webhook 錯誤]：{e}")
         return {"status": "error", "message": str(e)}
+
 
 @app.post("/tv_webhook_test")
 async def tv_webhook_test(request: Request):
