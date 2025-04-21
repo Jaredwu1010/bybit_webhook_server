@@ -205,7 +205,7 @@ async def tv_webhook(request: Request):
         api_key = os.getenv("BYBIT_API_KEY")
         api_secret = os.getenv("BYBIT_API_SECRET")
         base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
-        endpoint = f"{base_url}/v5/account/wallet-balance"
+        endpoint = f"{base_url}/v5/account/wallet-balance?accountType=UNIFIED"
 
         timestamp = str(int(time.time() * 1000))
         recv_window = "5000"
