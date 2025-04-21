@@ -223,12 +223,18 @@ async def tv_webhook(request: Request):
             async with httpx.AsyncClient() as client:
                 response = await client.get(endpoint, headers=headers)
                 data = response.json()
-                print("[📦 Bybit API 回傳]", data)  # 👈 新增這行
-                try:
-                    equity = float(data["result"]["list"][0]["availableBalance"])  # ✅ 改為使用可用保證金
-                except Exception as e:
-                    print("[⚠️ 解析 Bybit 回傳失敗]", e)
+                print("[📦 Bybit API 回傳]", data)
+            try:
+                usdt_info = next((c for c in data["result"]["list"][0]["coin"] if c["coin"] == "USDT"), None)
+                if usdt_info and "availableToWithdraw" in usdt_info:
+                    equity = float(usdt_info["availableToWithdraw"])
+                else:
+                    print("[⚠️ USDT 資訊缺失或格式錯誤]")
                     equity = float(os.getenv("EQUITY_FALLBACK", "100"))
+            except Exception as e:
+                print("[⚠️ 解析 Bybit 回傳失敗]", e)
+                equity = float(os.getenv("EQUITY_FALLBACK", "100"))
+
         except Exception as e:
             print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
             equity = float(os.getenv("EQUITY_FALLBACK", "100"))
