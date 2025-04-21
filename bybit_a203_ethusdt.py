@@ -209,6 +209,7 @@ async def tv_webhook(request: Request):
         contracts = payload.get("contracts", None)
         action = "Buy" if "long" in order_id else "Sell"
         symbol = payload.get("symbol")
+        symbol = symbol.replace(".P", "")  # ⬅️ 移除 TradingView 傳來的 .P
         price_str = payload.get("price")
         price = float(price_str) if price_str is not None else 0.0
         capital_percent = float(payload.get("capital_percent", 0))
