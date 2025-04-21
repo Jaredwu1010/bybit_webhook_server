@@ -222,7 +222,12 @@ async def tv_webhook(request: Request):
             async with httpx.AsyncClient() as client:
                 response = await client.get(endpoint, headers=headers)
                 data = response.json()
-                equity = float(data["result"]["list"][0]["totalEquity"])
+                print("[📦 Bybit API 回傳]", data)  # 👈 新增這行
+                try:
+                    equity = float(data["result"]["list"][0]["totalEquity"])
+                except Exception as e:
+                    print("[⚠️ 解析 Bybit 回傳失敗]", e)
+                    equity = float(os.getenv("EQUITY_FALLBACK", "100"))
         except Exception as e:
             print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
             equity = float(os.getenv("EQUITY_FALLBACK", "100"))
