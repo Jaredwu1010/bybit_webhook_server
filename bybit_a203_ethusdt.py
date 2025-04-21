@@ -243,8 +243,10 @@ async def tv_webhook(request: Request):
                 "message": f"下單失敗：qty={qty} 小於最小下單量 {min_qty}"
             }
 
+        print("[🚀 正在送出下單請求...]")
         await place_order(symbol, action, qty)
-
+        print("[✅ 已送出下單請求]")
+        
         with open(log_json_path, "r+") as f:
             logs = json.load(f)
             logs.append({
