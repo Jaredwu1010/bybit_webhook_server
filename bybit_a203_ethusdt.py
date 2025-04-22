@@ -228,11 +228,11 @@ async def tv_webhook(request: Request):
         price_str = payload.get("price")
         price = float(price_str) if price_str is not None else 0.0
         capital_percent = float(payload.get("capital_percent", 0))
+
         from datetime import datetime, timedelta, timezone
         tz_tw = timezone(timedelta(hours=8))
         now_tw = datetime.now(tz=tz_tw)
         timestamp_str = now_tw.strftime("%Y-%m-%d %H:%M:%S")  # ➜ 格式為 2025-04-23 00:21:00
-
 
         if price <= 0 or capital_percent <= 0:
             print("❌ 無效的 price 或 capital_percent")
@@ -240,6 +240,8 @@ async def tv_webhook(request: Request):
 
         event = order_id
         order_action = infer_action_from_order_id(order_id)
+
+        # ✅ 取得帳戶餘額
         api_key = os.getenv("BYBIT_API_KEY")
         api_secret = os.getenv("BYBIT_API_SECRET")
         base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
@@ -272,29 +274,6 @@ async def tv_webhook(request: Request):
                 )
                 if equity_str not in ["", None]:
                     equity = float(equity_str)
-                    
-        # 僅 entry 開頭的才執行實際下單
-        is_entry = order_id.startswith("entry_")
-
-        if is_entry:
-            qty = (equity * capital_percent / 100) / price
-            qty = round(qty, 2)
-    
-            print(f"[📦 下單資訊] equity={equity} capital%={capital_percent} price={price} qty={qty}")
-            print(f"👉 totalAvailableBalance={usdt_info.get('totalAvailableBalance')} availableToWithdraw={usdt_info.get('availableToWithdraw')} equity={usdt_info.get('equity')}")
-    
-            if qty < 0.01:
-                print(f"[❌ Qty Too Small] qty={qty} 小於最小下單量 0.01")
-                return {"status": "error", "message": f"qty too small: {qty}"}
-
-            print("[🚀 正在送出下單請求...]")
-            order_result = await place_order(symbol, "Buy" if "多單" in order_action else "Sell", qty)
-            print("[✅ 已送出下單請求]")
-        else:
-            qty = 0.0
-            order_result = {"retCode": None, "retMsg": None, "result": {}}
-        
-        
                 else:
                     print("[⚠️ USDT 欄位皆為空，使用預設值]")
                     equity = float(os.getenv("EQUITY_FALLBACK", "100"))
@@ -306,9 +285,27 @@ async def tv_webhook(request: Request):
             print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
             equity = float(os.getenv("EQUITY_FALLBACK", "100"))
 
-        order_result = await place_order(symbol, action, qty)
-        print("[✅ 已送出下單請求]")
+        # ✅ 決定是否執行下單
+        is_entry = order_id.startswith("entry_")
+        if is_entry:
+            qty = (equity * capital_percent / 100) / price
+            qty = round(qty, 2)
 
+            print(f"[📦 下單資訊] equity={equity} capital%={capital_percent} price={price} qty={qty}")
+            print(f"👉 totalAvailableBalance={usdt_info.get('totalAvailableBalance')} availableToWithdraw={usdt_info.get('availableToWithdraw')} equity={usdt_info.get('equity')}")
+
+            if qty < 0.01:
+                print(f"[❌ Qty Too Small] qty={qty} 小於最小下單量 0.01")
+                return {"status": "error", "message": f"qty too small: {qty}"}
+
+            print("[🚀 正在送出下單請求...]")
+            order_result = await place_order(symbol, "Buy" if "多單" in order_action else "Sell", qty)
+            print("[✅ 已送出下單請求]")
+        else:
+            qty = 0.0
+            order_result = {"retCode": None, "retMsg": None, "result": {}}
+
+        # ✅ 回寫 log.json
         ret_code = order_result.get("retCode")
         ret_msg = order_result.get("retMsg")
         pnl = order_result.get("result", {}).get("cumRealisedPnl", None)
@@ -334,7 +331,7 @@ async def tv_webhook(request: Request):
             f.seek(0)
             json.dump(logs, f, indent=2)
 
-        # ✅ 自動補欄位標題
+        # ✅ 回寫 Google Sheet
         expected_headers = [
             "timestamp", "strategy_id", "event", "equity", "drawdown",
             "order_action", "trigger_type", "comment", "contracts",
@@ -370,7 +367,6 @@ async def tv_webhook(request: Request):
     except Exception as e:
         print(f"[⚠️ TV Webhook 錯誤]：{e}")
         return {"status": "error", "message": str(e)}
-
 
 @app.post("/tv_webhook_test")
 async def tv_webhook_test(request: Request):
