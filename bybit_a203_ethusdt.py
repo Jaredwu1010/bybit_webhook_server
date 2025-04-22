@@ -410,13 +410,38 @@ async def tv_webhook_test(request: Request):
         print(f"[⚠️ TV 測試 webhook 錯誤]：{e}")
         return {"status": "error", "message": str(e)}
 
-# 🧠 判斷動作方向
-def infer_action_from_order_id(order_id: str):
-    if "long" in order_id:
-        return "Buy"
-    elif "short" in order_id:
-        return "Sell"
+# 🧠 根據 order_id 精準推斷動作方向與用途
+def infer_action_from_order_id(order_id: str) -> str:
+    if order_id.startswith("entry_long"):
+        return "多單建倉"
+    elif order_id.startswith("entry_short"):
+        return "空單建倉"
+    elif order_id.startswith("tp1_long"):
+        return "多單止盈"
+    elif order_id.startswith("tp1_short"):
+        return "空單止盈"
+    elif order_id.startswith("trail_long"):
+        return "多單移動止損"
+    elif order_id.startswith("trail_short"):
+        return "空單移動止損"
+    elif order_id.startswith("stop_loss_long"):
+        return "多單止損"
+    elif order_id.startswith("stop_loss_short"):
+        return "空單止損"
+    elif order_id.startswith("breakeven_long"):
+        return "多單套保"
+    elif order_id.startswith("breakeven_short"):
+        return "空單套保"
+    elif order_id.startswith("residual_close_long"):
+        return "多單清殘倉"
+    elif order_id.startswith("residual_close_short"):
+        return "空單清殘倉"
+    elif order_id.startswith("close_long_for_short"):
+        return "多單反手轉空"
+    elif order_id.startswith("close_short_for_long"):
+        return "空單反手轉多"
     return "unknown"
+
 
 @app.post("/webhook")
 async def webhook_handler(payload: WebhookPayload):
