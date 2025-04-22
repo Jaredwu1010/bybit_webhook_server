@@ -228,7 +228,11 @@ async def tv_webhook(request: Request):
         price_str = payload.get("price")
         price = float(price_str) if price_str is not None else 0.0
         capital_percent = float(payload.get("capital_percent", 0))
-        timestamp_str = payload.get("time")
+        from datetime import datetime, timedelta, timezone
+        tz_tw = timezone(timedelta(hours=8))
+        now_tw = datetime.now(tz=tz_tw)
+        timestamp_str = now_tw.strftime("%Y-%m-%d %H:%M:%S")  # ➜ 格式為 2025-04-23 00:21:00
+
 
         if price <= 0 or capital_percent <= 0:
             print("❌ 無效的 price 或 capital_percent")
