@@ -223,25 +223,17 @@ async def tv_webhook(request: Request):
         contracts = payload.get("contracts", None)
         symbol = payload.get("symbol", "")
         if symbol.endswith(".P"):
-            symbol = symbol.replace(".P", "")  # ✅ 修正測試網合約名稱
-        action = infer_action_from_order_id(order_id)
-        price_str = payload.get("price")
-        price = float(price_str) if price_str is not None else 0.0
-        capital_percent = float(payload.get("capital_percent", 0))
+            symbol = symbol.replace(".P", "")
 
+        price = float(payload.get("price", 0))
+        capital_percent = float(payload.get("capital_percent", 0))
         from datetime import datetime, timedelta, timezone
         tz_tw = timezone(timedelta(hours=8))
-        now_tw = datetime.now(tz=tz_tw)
-        timestamp_str = now_tw.strftime("%Y-%m-%d %H:%M:%S")  # ➜ 格式為 2025-04-23 00:21:00
-
-        if price <= 0 or capital_percent <= 0:
-            print("❌ 無效的 price 或 capital_percent")
-            return {"status": "error", "message": "Invalid price or capital_percent"}
+        timestamp_str = datetime.now(tz=tz_tw).strftime("%Y-%m-%d %H:%M:%S")
 
         event = order_id
         order_action = infer_action_from_order_id(order_id)
 
-        # ✅ 取得帳戶餘額
         api_key = os.getenv("BYBIT_API_KEY")
         api_secret = os.getenv("BYBIT_API_SECRET")
         base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
@@ -272,40 +264,28 @@ async def tv_webhook(request: Request):
                     usdt_info.get("availableToWithdraw") or
                     usdt_info.get("equity")
                 )
-                if equity_str not in ["", None]:
-                    equity = float(equity_str)
-                else:
-                    print("[⚠️ USDT 欄位皆為空，使用預設值]")
-                    equity = float(os.getenv("EQUITY_FALLBACK", "100"))
+                equity = float(equity_str) if equity_str not in ["", None] else float(os.getenv("EQUITY_FALLBACK", "100"))
             else:
-                print("[⚠️ 找不到 USDT 資產資料，使用預設值]")
                 equity = float(os.getenv("EQUITY_FALLBACK", "100"))
-
         except Exception as e:
             print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
             equity = float(os.getenv("EQUITY_FALLBACK", "100"))
 
-        # ✅ 決定是否執行下單
         is_entry = order_id.startswith("entry_")
         if is_entry:
-            qty = (equity * capital_percent / 100) / price
-            qty = round(qty, 2)
-
+            qty = round((equity * capital_percent / 100) / price, 2)
             print(f"[📦 下單資訊] equity={equity} capital%={capital_percent} price={price} qty={qty}")
             print(f"👉 totalAvailableBalance={usdt_info.get('totalAvailableBalance')} availableToWithdraw={usdt_info.get('availableToWithdraw')} equity={usdt_info.get('equity')}")
-
-            if qty < 0.01:
+            if qty >= 0.01:
+                order_result = await place_order(symbol, "Buy" if "多單" in order_action else "Sell", qty)
+                print("[✅ 已送出下單請求]")
+            else:
                 print(f"[❌ Qty Too Small] qty={qty} 小於最小下單量 0.01")
-                return {"status": "error", "message": f"qty too small: {qty}"}
-
-            print("[🚀 正在送出下單請求...]")
-            order_result = await place_order(symbol, "Buy" if "多單" in order_action else "Sell", qty)
-            print("[✅ 已送出下單請求]")
+                order_result = {"retCode": None, "retMsg": "qty too small", "result": {}}
         else:
             qty = 0.0
-            order_result = {"retCode": None, "retMsg": None, "result": {}}
+            order_result = {"retCode": None, "retMsg": "not entry signal", "result": {}}
 
-        # ✅ 回寫 log.json
         ret_code = order_result.get("retCode")
         ret_msg = order_result.get("retMsg")
         pnl = order_result.get("result", {}).get("cumRealisedPnl", None)
@@ -315,13 +295,13 @@ async def tv_webhook(request: Request):
             logs.append({
                 "timestamp": timestamp_str,
                 "strategy_id": strategy_id,
-                "event": order_id,
+                "event": event,
                 "trigger_type": trigger_type,
                 "comment": comment,
                 "contracts": contracts,
                 "equity": equity,
                 "drawdown": None,
-                "order_action": action,
+                "order_action": order_action,
                 "ret_code": ret_code,
                 "ret_msg": ret_msg,
                 "pnl": pnl,
@@ -331,35 +311,17 @@ async def tv_webhook(request: Request):
             f.seek(0)
             json.dump(logs, f, indent=2)
 
-        # ✅ 回寫 Google Sheet
-        expected_headers = [
-            "timestamp", "strategy_id", "event", "equity", "drawdown",
-            "order_action", "trigger_type", "comment", "contracts",
-            "ret_code", "ret_msg", "pnl", "price", "qty"
-        ]
         if sheet:
             headers = sheet.row_values(1)
-            print(f"[📄 Sheet 狀態] {sheet}")
             row = [
-                timestamp_str or '',
-                strategy_id or '',
-                order_id or '',
-                equity or '',
-                '',
-                action or '',
-                trigger_type or '',
-                comment or '',
-                contracts or '',
-                ret_code or '',
-                ret_msg or '',
-                pnl or '',
-                price or '',
-                qty or ''
+                timestamp_str, strategy_id, event, equity, '', order_action, trigger_type,
+                comment, contracts, ret_code, ret_msg, pnl, price, qty
             ]
-            print(f"[📝 準備寫入資料] {row}")
-            print(f"[📋 Sheet 標題] {headers}")
-            if headers != expected_headers:
-                sheet.update("A1:N1", [expected_headers])
+            if headers != [
+                "timestamp", "strategy_id", "event", "equity", "drawdown", "order_action", 
+                "trigger_type", "comment", "contracts", "ret_code", "ret_msg", "pnl", "price", "qty"
+            ]:
+                sheet.update("A1:N1", [headers])
             sheet.append_row(row)
 
         return {"status": "ok", "message": "tv webhook received"}
