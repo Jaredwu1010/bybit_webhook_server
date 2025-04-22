@@ -224,7 +224,7 @@ async def tv_webhook(request: Request):
         symbol = payload.get("symbol", "")
         if symbol.endswith(".P"):
             symbol = symbol.replace(".P", "")  # ✅ 修正測試網合約名稱
-        action = "Buy" if "long" in order_id else "Sell"
+        action = infer_action_from_order_id(order_id)
         price_str = payload.get("price")
         price = float(price_str) if price_str is not None else 0.0
         capital_percent = float(payload.get("capital_percent", 0))
