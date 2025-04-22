@@ -50,13 +50,15 @@ try:
 except Exception as e:
     print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
 
-def write_to_gsheet(timestamp, strategy_id, event, equity=None, drawdown=None, order_action=None, trigger_type=None, comment=None, contracts=None, ret_code=None, ret_msg=None, pnl=None):
+def write_to_gsheet(timestamp, strategy_id, event, equity=None, drawdown=None, order_action=None,
+                    trigger_type=None, comment=None, contracts=None, ret_code=None, ret_msg=None,
+                    pnl=None, price=None, qty=None):
     try:
         if sheet:
             row = [
-                timestamp,
-                strategy_id,
-                event,
+                timestamp or '',
+                strategy_id or '',
+                event or '',
                 equity or '',
                 drawdown or '',
                 order_action or '',
@@ -65,8 +67,21 @@ def write_to_gsheet(timestamp, strategy_id, event, equity=None, drawdown=None, o
                 contracts or '',
                 ret_code or '',
                 ret_msg or '',
-                pnl or ''
+                pnl or '',
+                price or '',
+                qty or ''
             ]
+            print(f"[📄 Sheet 狀態] {sheet}")
+            print(f"[📝 準備寫入資料] {row}")
+            headers = sheet.row_values(1)
+            print(f"[📋 Sheet 標題] {headers}")
+            expected_headers = [
+                "timestamp", "strategy_id", "event", "equity", "drawdown",
+                "order_action", "trigger_type", "comment", "contracts",
+                "ret_code", "ret_msg", "pnl", "price", "qty"
+            ]
+            if headers != expected_headers:
+                sheet.update("A1:N1", [expected_headers])
             sheet.append_row(row)
             print("[✅ 已寫入 Google Sheets]")
     except Exception as e:
