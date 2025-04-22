@@ -190,7 +190,6 @@ async def equity_status():
         fallback = float(os.getenv("EQUITY_FALLBACK", "100"))
         return {"status": "fallback", "equity": fallback, "error": str(e)}
 
-# ✅ /tv_webhook
 @app.post("/tv_webhook")
 async def tv_webhook(request: Request):
     try:
@@ -298,15 +297,41 @@ async def tv_webhook(request: Request):
                 "order_action": action,
                 "ret_code": ret_code,
                 "ret_msg": ret_msg,
-                "pnl": pnl
+                "pnl": pnl,
+                "price": price,
+                "qty": qty
             })
             f.seek(0)
             json.dump(logs, f, indent=2)
 
-        write_to_gsheet(
-            timestamp_str, strategy_id, order_id, equity, None, action,
-            trigger_type, comment, contracts, ret_code, ret_msg, pnl
-        )
+        # ✅ 自動補欄位標題
+        expected_headers = [
+            "timestamp", "strategy_id", "event", "equity", "drawdown",
+            "order_action", "trigger_type", "comment", "contracts",
+            "ret_code", "ret_msg", "pnl", "price", "qty"
+        ]
+        if sheet:
+            headers = sheet.row_values(1)
+            if headers != expected_headers:
+                sheet.update("A1:N1", [expected_headers])
+
+        # ✅ 寫入資料
+        sheet.append_row([
+            timestamp_str,
+            strategy_id,
+            order_id,
+            equity,
+            '',
+            action,
+            trigger_type,
+            comment,
+            contracts,
+            ret_code,
+            ret_msg,
+            pnl,
+            price,
+            qty
+        ])
 
         return {"status": "ok", "message": "tv webhook received"}
 
