@@ -304,6 +304,12 @@ async def tv_webhook(request: Request):
             f.seek(0)
             json.dump(logs, f, indent=2)
 
+        write_to_gsheet(
+            timestamp_str, strategy_id, order_id, equity, None, action,
+            trigger_type, comment, contracts, ret_code, ret_msg, pnl,
+            price, qty
+        )
+
         # ✅ 自動補欄位標題
         expected_headers = [
             "timestamp", "strategy_id", "event", "equity", "drawdown",
