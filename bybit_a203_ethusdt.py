@@ -238,6 +238,30 @@ async def tv_webhook(request: Request):
             print("❌ 無效的 price 或 capital_percent")
             return {"status": "error", "message": "Invalid price or capital_percent"}
 
+        event = order_id
+        order_action = infer_action_from_order_id(order_id)
+
+        # 僅 entry 開頭的才執行實際下單
+        is_entry = order_id.startswith("entry_")
+
+        if is_entry:
+            qty = (equity * capital_percent / 100) / price
+            qty = round(qty, 2)
+    
+            print(f"[📦 下單資訊] equity={equity} capital%={capital_percent} price={price} qty={qty}")
+            print(f"👉 totalAvailableBalance={usdt_info.get('totalAvailableBalance')} availableToWithdraw={usdt_info.get('availableToWithdraw')} equity={usdt_info.get('equity')}")
+    
+            if qty < 0.01:
+                print(f"[❌ Qty Too Small] qty={qty} 小於最小下單量 0.01")
+                return {"status": "error", "message": f"qty too small: {qty}"}
+
+            print("[🚀 正在送出下單請求...]")
+            order_result = await place_order(symbol, "Buy" if "多單" in order_action else "Sell", qty)
+            print("[✅ 已送出下單請求]")
+        else:
+            qty = 0.0
+            order_result = {"retCode": None, "retMsg": None, "result": {}}
+        
         api_key = os.getenv("BYBIT_API_KEY")
         api_secret = os.getenv("BYBIT_API_SECRET")
         base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
@@ -280,11 +304,6 @@ async def tv_webhook(request: Request):
         except Exception as e:
             print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
             equity = float(os.getenv("EQUITY_FALLBACK", "100"))
-
-        qty = (equity * capital_percent / 100) / price
-        qty = round(qty, 2)
-        print(f"[📦 下單資訊] equity={equity} capital%={capital_percent} price={price} qty={qty}")
-        print(f"👉 totalAvailableBalance={usdt_info.get('totalAvailableBalance')} availableToWithdraw={usdt_info.get('availableToWithdraw')} equity={usdt_info.get('equity')}")
 
         min_qty = 0.01
         if qty < min_qty:
