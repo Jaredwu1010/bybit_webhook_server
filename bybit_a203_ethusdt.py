@@ -312,10 +312,7 @@ async def tv_webhook(request: Request):
         ]
         if sheet:
             headers = sheet.row_values(1)
-            if headers != expected_headers:
-                sheet.update("A1:N1", [expected_headers])
-
-            # ✅ 寫入資料（空值為空字串）
+            print(f"[📄 Sheet 狀態] {sheet}")
             row = [
                 timestamp_str or '',
                 strategy_id or '',
@@ -332,6 +329,10 @@ async def tv_webhook(request: Request):
                 price or '',
                 qty or ''
             ]
+            print(f"[📝 準備寫入資料] {row}")
+            print(f"[📋 Sheet 標題] {headers}")
+            if headers != expected_headers:
+                sheet.update("A1:N1", [expected_headers])
             sheet.append_row(row)
 
         return {"status": "ok", "message": "tv webhook received"}
@@ -339,6 +340,7 @@ async def tv_webhook(request: Request):
     except Exception as e:
         print(f"[⚠️ TV Webhook 錯誤]：{e}")
         return {"status": "error", "message": str(e)}
+
 
 @app.post("/tv_webhook_test")
 async def tv_webhook_test(request: Request):
