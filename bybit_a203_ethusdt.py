@@ -210,34 +210,45 @@ async def tv_webhook(request: Request):
     try:
         payload = await request.json()
 
+        # 1️⃣ Secret 驗證
         expected_secret = os.getenv("WEBHOOK_SECRET", "letmein")
         received_secret = payload.get("secret", "")
         if received_secret != expected_secret:
             print("❌ Webhook secret 驗證失敗")
             return {"status": "unauthorized", "message": "invalid secret"}
 
-        strategy_id = payload.get("strategy_id")
-        order_id = payload.get("order_id")
+        # 2️⃣ TradingView 傳過來的欄位
+        strategy_id  = payload.get("strategy_id")
+        order_id     = payload.get("order_id")
         trigger_type = payload.get("trigger_type")
-        comment = payload.get("comment", "")
-        contracts = payload.get("contracts", None)
-        symbol = payload.get("symbol", "")
+        comment      = payload.get("comment", "")
+        contracts    = payload.get("contracts", None)
+        symbol       = payload.get("symbol", "")
+        # 新增：TV 那根 bar 的開盤時間
+        tv_bar_time  = payload.get("tv_bar_time", "")
+
+        # 如有 .P 結尾，去掉
         if symbol.endswith(".P"):
             symbol = symbol.replace(".P", "")
 
-        price = float(payload.get("price", 0))
+        # 數值型欄位
+        price          = float(payload.get("price", 0))
         capital_percent = float(payload.get("capital_percent", 0))
+
+        # 取得台北時間字串
         from datetime import datetime, timedelta, timezone
         tz_tw = timezone(timedelta(hours=8))
         timestamp_str = datetime.now(tz=tz_tw).strftime("%Y-%m-%d %H:%M:%S")
 
-        event = order_id
+        # 推斷動作方向
+        event        = order_id
         order_action = infer_action_from_order_id(order_id)
 
-        api_key = os.getenv("BYBIT_API_KEY")
+        # 3️⃣ Bybit API 取餘額（不變動）
+        api_key    = os.getenv("BYBIT_API_KEY")
         api_secret = os.getenv("BYBIT_API_SECRET")
-        base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
-        endpoint = f"{base_url}/v5/account/wallet-balance?accountType=UNIFIED"
+        base_url  = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
+        endpoint  = f"{base_url}/v5/account/wallet-balance?accountType=UNIFIED"
 
         timestamp = str(int(time.time() * 1000))
         recv_window = "5000"
@@ -260,9 +271,9 @@ async def tv_webhook(request: Request):
             usdt_info = next((c for c in data["result"]["list"][0]["coin"] if c["coin"] == "USDT"), None)
             if usdt_info:
                 equity_str = (
-                    usdt_info.get("totalAvailableBalance") or
-                    usdt_info.get("availableToWithdraw") or
-                    usdt_info.get("equity")
+                    usdt_info.get("totalAvailableBalance")
+                    or usdt_info.get("availableToWithdraw")
+                    or usdt_info.get("equity")
                 )
                 equity = float(equity_str) if equity_str not in ["", None] else float(os.getenv("EQUITY_FALLBACK", "100"))
             else:
@@ -271,11 +282,11 @@ async def tv_webhook(request: Request):
             print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
             equity = float(os.getenv("EQUITY_FALLBACK", "100"))
 
+        # 4️⃣ 務 entry_ 開頭才下單，其它動作 qty=0
         is_entry = order_id.startswith("entry_")
         if is_entry:
             qty = round((equity * capital_percent / 100) / price, 2)
             print(f"[📦 下單資訊] equity={equity} capital%={capital_percent} price={price} qty={qty}")
-            print(f"👉 totalAvailableBalance={usdt_info.get('totalAvailableBalance')} availableToWithdraw={usdt_info.get('availableToWithdraw')} equity={usdt_info.get('equity')}")
             if qty >= 0.01:
                 order_result = await place_order(symbol, "Buy" if "多單" in order_action else "Sell", qty)
                 print("[✅ 已送出下單請求]")
@@ -286,13 +297,16 @@ async def tv_webhook(request: Request):
             qty = 0.0
             order_result = {"retCode": None, "retMsg": "not entry signal", "result": {}}
 
+        # 5️⃣ 收集回傳結果
         ret_code = order_result.get("retCode")
-        ret_msg = order_result.get("retMsg")
-        pnl = order_result.get("result", {}).get("cumRealisedPnl", None)
+        ret_msg  = order_result.get("retMsg")
+        pnl      = order_result.get("result", {}).get("cumRealisedPnl", None)
 
+        # 6️⃣ 寫入本地 log.json，多加一欄 tv_bar_time
         with open(log_json_path, "r+") as f:
             logs = json.load(f)
             logs.append({
+                "tv_bar_time": tv_bar_time,
                 "timestamp": timestamp_str,
                 "strategy_id": strategy_id,
                 "event": event,
@@ -311,17 +325,34 @@ async def tv_webhook(request: Request):
             f.seek(0)
             json.dump(logs, f, indent=2)
 
+        # 7️⃣ 寫入 Google Sheet，多在最前面插入一欄 tv_bar_time
         if sheet:
             headers = sheet.row_values(1)
-            row = [
-                timestamp_str, strategy_id, event, equity, '', order_action, trigger_type,
-                comment, contracts, ret_code, ret_msg, pnl, price, qty
+            new_headers = [
+                "tv_bar_time", "timestamp", "strategy_id", "event", "equity", "drawdown",
+                "order_action", "trigger_type", "comment", "contracts",
+                "ret_code", "ret_msg", "pnl", "price", "qty"
             ]
-            if headers != [
-                "timestamp", "strategy_id", "event", "equity", "drawdown", "order_action", 
-                "trigger_type", "comment", "contracts", "ret_code", "ret_msg", "pnl", "price", "qty"
-            ]:
-                sheet.update("A1:N1", [headers])
+            row = [
+                tv_bar_time,
+                timestamp_str,
+                strategy_id,
+                event,
+                equity,
+                '',
+                order_action,
+                trigger_type,
+                comment,
+                contracts,
+                ret_code,
+                ret_msg,
+                pnl,
+                price,
+                qty
+            ]
+            # 如果標題不一樣，就更新
+            if headers != new_headers:
+                sheet.update("A1:O1", [new_headers])
             sheet.append_row(row)
 
         return {"status": "ok", "message": "tv webhook received"}
