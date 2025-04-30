@@ -2,15 +2,15 @@ from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 import httpx
 import os
 import json
+from pydantic import BaseModel 
 import asyncio
 import gspread
 import matplotlib.pyplot as plt
 from google.oauth2.service_account import Credentials
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import collections
 import time
@@ -50,40 +50,36 @@ try:
 except Exception as e:
     print(f"[⚠️ Google Sheets 初始化失敗]：{e}")
 
-def write_to_gsheet(timestamp, strategy_id, event, equity=None, drawdown=None, order_action=None,
-                    trigger_type=None, comment=None, contracts=None, ret_code=None, ret_msg=None,
-                    pnl=None, price=None, qty=None):
+def write_to_gsheet(
+         pine_time, server_time,
+         strategy_id, event,
+         equity=None, drawdown=None,
+         order_action=None, trigger_type=None,
+         comment=None, contracts=None,
+         ret_code=None, ret_msg=None,
+         pnl=None, price=None, qty=None):
     try:
         if sheet:
-            row = [
-                timestamp or '',
-                strategy_id or '',
-                event or '',
-                equity or '',
-                drawdown or '',
-                order_action or '',
-                trigger_type or '',
-                comment or '',
-                contracts or '',
-                ret_code or '',
-                ret_msg or '',
-                pnl or '',
-                price or '',
-                qty or ''
-            ]
-            print(f"[📄 Sheet 狀態] {sheet}")
-            print(f"[📝 準備寫入資料] {row}")
-            headers = sheet.row_values(1)
-            print(f"[📋 Sheet 標題] {headers}")
             expected_headers = [
-                "timestamp", "strategy_id", "event", "equity", "drawdown",
+                "pine_time", "server_time",
+                "strategy_id", "event", "equity", "drawdown",
                 "order_action", "trigger_type", "comment", "contracts",
                 "ret_code", "ret_msg", "pnl", "price", "qty"
             ]
+            headers = sheet.row_values(1)
             if headers != expected_headers:
-                sheet.update("A1:N1", [expected_headers])
+                sheet.update("A1:O1", [expected_headers])
+            row = [
+                pine_time, server_time,
+                strategy_id, event,
+                equity, drawdown,
+                order_action, trigger_type,
+                comment, contracts,
+                ret_code, ret_msg,
+                pnl, price, qty
+            ]
+            print(f"[📝 準備寫入資料] {row}")
             sheet.append_row(row)
-            print("[✅ 已寫入 Google Sheets]")
     except Exception as e:
         print(f"[⚠️ Google Sheets 寫入失敗]：{e}")
 
@@ -149,11 +145,45 @@ class WebhookPayloadData(BaseModel):
 class WebhookPayload(BaseModel):
     strategy_id: str
     signal_type: str
+    time: str
+    trigger_type: str = None 
     equity: float = None
     symbol: str = None
     order_type: str = None
     data: WebhookPayloadData = None
     secret: str = None
+
+# 🧠 根據 order_id 精準推斷動作方向與用途
+def infer_action_from_order_id(order_id: str) -> str:
+    if order_id.startswith("entry_long"):
+        return "多單建倉"
+    elif order_id.startswith("entry_short"):
+        return "空單建倉"
+    elif order_id.startswith("tp1_long"):
+        return "多單止盈"
+    elif order_id.startswith("tp1_short"):
+        return "空單止盈"
+    elif order_id.startswith("trail_long"):
+        return "多單移動止損"
+    elif order_id.startswith("trail_short"):
+        return "空單移動止損"
+    elif order_id.startswith("stop_loss_long"):
+        return "多單止損"
+    elif order_id.startswith("stop_loss_short"):
+        return "空單止損"
+    elif order_id.startswith("breakeven_long"):
+        return "多單套保"
+    elif order_id.startswith("breakeven_short"):
+        return "空單套保"
+    elif order_id.startswith("residual_close_long"):
+        return "多單清殘倉"
+    elif order_id.startswith("residual_close_short"):
+        return "空單清殘倉"
+    elif order_id.startswith("close_long_for_short"):
+        return "多單反手轉空"
+    elif order_id.startswith("close_short_for_long"):
+        return "空單反手轉多"
+    return "unknown"
 
 # ✅ 新增 LINE Callback 接收模組（放在 /webhook 前面）
 @app.post("/line_callback")
@@ -209,40 +239,27 @@ async def equity_status():
 async def tv_webhook(request: Request):
     try:
         payload = await request.json()
+        # 驗證 secret
+        if payload.get("secret","") != os.getenv("WEBHOOK_SECRET","letmein"):
+            return {"status":"unauthorized"}
 
-        # 1️⃣ Secret 驗證
-        expected_secret = os.getenv("WEBHOOK_SECRET", "letmein")
-        received_secret = payload.get("secret", "")
-        if received_secret != expected_secret:
-            print("❌ Webhook secret 驗證失敗")
-            return {"status": "unauthorized", "message": "invalid secret"}
+        # 拆解
+        strategy_id     = payload.get("strategy_id","")
+        order_id        = payload.get("order_id","")
+        trigger_type    = payload.get("trigger_type","")
+        comment         = payload.get("comment","")
+        contracts       = payload.get("contracts",None)
+        symbol          = payload.get("symbol","")
+        if symbol.endswith(".P"): symbol = symbol[:-2]
+        price           = float(payload.get("price",0))
+        capital_percent = float(payload.get("capital_percent",0))
+        event           = order_id
+        order_action    = infer_action_from_order_id(order_id)
 
-        # 2️⃣ TradingView 傳過來的欄位
-        strategy_id  = payload.get("strategy_id")
-        order_id     = payload.get("order_id")
-        trigger_type = payload.get("trigger_type")
-        comment      = payload.get("comment", "")
-        contracts    = payload.get("contracts", None)
-        symbol       = payload.get("symbol", "")
-        # 新增：TV 那根 bar 的開盤時間
-        tv_bar_time  = payload.get("tv_bar_time", "")
-
-        # 如有 .P 結尾，去掉
-        if symbol.endswith(".P"):
-            symbol = symbol.replace(".P", "")
-
-        # 數值型欄位
-        price          = float(payload.get("price", 0))
-        capital_percent = float(payload.get("capital_percent", 0))
-
-        # 取得台北時間字串
-        from datetime import datetime, timedelta, timezone
-        tz_tw = timezone(timedelta(hours=8))
-        timestamp_str = datetime.now(tz=tz_tw).strftime("%Y-%m-%d %H:%M:%S")
-
-        # 推斷動作方向
-        event        = order_id
-        order_action = infer_action_from_order_id(order_id)
+        # 時間
+        pine_time   = payload.get("time","")
+        tz_tw       = timezone(timedelta(hours=8))
+        server_time = datetime.now(tz=tz_tw).strftime("%Y-%m-%d %H:%M:%S")
 
         # 3️⃣ Bybit API 取餘額（不變動）
         api_key    = os.getenv("BYBIT_API_KEY")
@@ -282,207 +299,161 @@ async def tv_webhook(request: Request):
             print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
             equity = float(os.getenv("EQUITY_FALLBACK", "100"))
 
-        # 4️⃣ 務 entry_ 開頭才下單，其它動作 qty=0
+       # 自動下單（只有 entry_*）
         is_entry = order_id.startswith("entry_")
         if is_entry:
-            qty = round((equity * capital_percent / 100) / price, 2)
-            print(f"[📦 下單資訊] equity={equity} capital%={capital_percent} price={price} qty={qty}")
-            if qty >= 0.01:
-                order_result = await place_order(symbol, "Buy" if "多單" in order_action else "Sell", qty)
-                print("[✅ 已送出下單請求]")
+            qty = round((equity * capital_percent/100)/price,2)
+            if qty>=0.01:
+                order_result = await place_order(
+                    symbol,
+                    "Buy" if "long" in order_action else "Sell",
+                    qty
+                )
             else:
-                print(f"[❌ Qty Too Small] qty={qty} 小於最小下單量 0.01")
-                order_result = {"retCode": None, "retMsg": "qty too small", "result": {}}
+                order_result = {"retCode":None,"retMsg":"qty too small","result":{}}
         else:
             qty = 0.0
-            order_result = {"retCode": None, "retMsg": "not entry signal", "result": {}}
+            order_result = {"retCode":None,"retMsg":"not entry","result":{}}
 
-        # 5️⃣ 收集回傳結果
+        # 6. 拿到下单回报
         ret_code = order_result.get("retCode")
         ret_msg  = order_result.get("retMsg")
-        pnl      = order_result.get("result", {}).get("cumRealisedPnl", None)
+        pnl      = order_result.get("result",{}).get("cumRealisedPnl",None)
 
-        # 6️⃣ 寫入本地 log.json，多加一欄 tv_bar_time
-        with open(log_json_path, "r+") as f:
+         # 寫入 log.json
+        with open(log_json_path,"r+") as f:
             logs = json.load(f)
             logs.append({
-                "tv_bar_time": tv_bar_time,
-                "timestamp": timestamp_str,
-                "strategy_id": strategy_id,
-                "event": event,
+                "pine_time":    pine_time,
+                "server_time":  server_time,
+                "strategy_id":  strategy_id,
+                "event":        event,
                 "trigger_type": trigger_type,
-                "comment": comment,
-                "contracts": contracts,
-                "equity": equity,
-                "drawdown": None,
+                "comment":      comment,
+                "contracts":    contracts,
+                "equity":       equity,
                 "order_action": order_action,
-                "ret_code": ret_code,
-                "ret_msg": ret_msg,
-                "pnl": pnl,
-                "price": price,
-                "qty": qty
+                "ret_code":     ret_code,
+                "ret_msg":      ret_msg,
+                "pnl":          pnl,
+                "price":        price,
+                "qty":          qty
             })
-            f.seek(0)
-            json.dump(logs, f, indent=2)
+            f.seek(0); json.dump(logs,f,indent=2)
 
-        # 7️⃣ 寫入 Google Sheet，多在最前面插入一欄 tv_bar_time
+         # 寫入 Google Sheet（15 欄）
         if sheet:
-            headers = sheet.row_values(1)
-            new_headers = [
-                "tv_bar_time", "timestamp", "strategy_id", "event", "equity", "drawdown",
-                "order_action", "trigger_type", "comment", "contracts",
-                "ret_code", "ret_msg", "pnl", "price", "qty"
-            ]
-            row = [
-                tv_bar_time,
-                timestamp_str,
-                strategy_id,
-                event,
-                equity,
-                '',
-                order_action,
-                trigger_type,
-                comment,
-                contracts,
-                ret_code,
-                ret_msg,
-                pnl,
-                price,
-                qty
-            ]
-            # 如果標題不一樣，就更新
-            if headers != new_headers:
-                sheet.update("A1:O1", [new_headers])
-            sheet.append_row(row)
+            sheet.append_row([
+                pine_time, server_time,
+                strategy_id, event,
+                equity, "",         # drawdown
+                order_action, trigger_type,
+                comment, contracts or "",
+                ret_code or "", ret_msg or "",
+                pnl or "", price, qty
+            ])
 
-        return {"status": "ok", "message": "tv webhook received"}
+        return {"status":"ok"}
 
     except Exception as e:
         print(f"[⚠️ TV Webhook 錯誤]：{e}")
-        return {"status": "error", "message": str(e)}
-
+        return {"status":"error","message":str(e)}
+        
 @app.post("/tv_webhook_test")
 async def tv_webhook_test(request: Request):
     try:
         payload = await request.json()
+        if payload.get("secret","") != os.getenv("WEBHOOK_SECRET","letmein"):
+            return {"status":"unauthorized"}
 
-        # ✅ Secret 驗證
-        expected_secret = os.getenv("WEBHOOK_SECRET", "letmein")
-        received_secret = payload.get("secret", "")
-        if received_secret != expected_secret:
-            print("❌ Webhook secret 驗證失敗")
-            return {"status": "unauthorized", "message": "invalid secret"}
+        strategy_id  = payload.get("strategy_id","")
+        order_id     = payload.get("order_id","")
+        action       = "Buy" if "long" in order_id else "Sell"
+        symbol       = payload.get("symbol","")
+        price        = float(payload.get("price",0))
+        trigger_type = payload.get("trigger_type","")
 
-        # ✅ 正常 webhook 資訊提取
-        strategy_id = payload.get("strategy_id")
-        order_id = payload.get("order_id")
-        action = "Buy" if "long" in order_id else "Sell"
-        symbol = payload.get("symbol")
-        price = float(payload.get("price"))
-        trigger_type = payload.get("trigger_type")
-        time = payload.get("time")
+        pine_time   = payload.get("time","")
+        tz_tw       = timezone(timedelta(hours=8))
+        server_time = datetime.now(tz=tz_tw).strftime("%Y-%m-%d %H:%M:%S")
 
-        print(f"🧪 [TV 測試 Webhook] {strategy_id} | {order_id} | {symbol}@{price} | qty=0.01")
-
-        # ✅ 固定 0.01 下單
         await place_order(symbol, action, 0.01)
 
-        # ✅ log.json 記錄
-        with open(log_json_path, "r+") as f:
+        with open(log_json_path,"r+") as f:
             logs = json.load(f)
             logs.append({
-                "timestamp": time,
-                "strategy_id": strategy_id,
-                "event": order_id + "_test",
-                "equity": None,
-                "drawdown": None,
-                "order_action": action
+                "pine_time":    pine_time,
+                "server_time":  server_time,
+                "strategy_id":  strategy_id,
+                "event":        order_id+"_test",
+                "equity":       None,
+                "drawdown":     None,
+                "order_action": action,
+                "trigger_type": trigger_type,
+                "comment":      None,
+                "contracts":    None,
+                "ret_code":     None,
+                "ret_msg":      None,
+                "pnl":          None,
+                "price":        price,
+                "qty":          0.01
             })
-            f.seek(0)
-            json.dump(logs, f, indent=2)
+            f.seek(0); json.dump(logs,f,indent=2)
 
-        # ✅ Google Sheets
-        write_to_gsheet(time, strategy_id, order_id + "_test", None, None, action)
+        if sheet:
+            sheet.append_row([
+                pine_time, server_time,
+                strategy_id, order_id+"_test",
+                "", "", action, trigger_type,
+                "", "", "", "", "", price, 0.01
+            ])
 
-        return {"status": "ok", "message": "tv_webhook_test received"}
-    
+        return {"status":"ok"}
     except Exception as e:
         print(f"[⚠️ TV 測試 webhook 錯誤]：{e}")
-        return {"status": "error", "message": str(e)}
-
-# 🧠 根據 order_id 精準推斷動作方向與用途
-def infer_action_from_order_id(order_id: str) -> str:
-    if order_id.startswith("entry_long"):
-        return "多單建倉"
-    elif order_id.startswith("entry_short"):
-        return "空單建倉"
-    elif order_id.startswith("tp1_long"):
-        return "多單止盈"
-    elif order_id.startswith("tp1_short"):
-        return "空單止盈"
-    elif order_id.startswith("trail_long"):
-        return "多單移動止損"
-    elif order_id.startswith("trail_short"):
-        return "空單移動止損"
-    elif order_id.startswith("stop_loss_long"):
-        return "多單止損"
-    elif order_id.startswith("stop_loss_short"):
-        return "空單止損"
-    elif order_id.startswith("breakeven_long"):
-        return "多單套保"
-    elif order_id.startswith("breakeven_short"):
-        return "空單套保"
-    elif order_id.startswith("residual_close_long"):
-        return "多單清殘倉"
-    elif order_id.startswith("residual_close_short"):
-        return "空單清殘倉"
-    elif order_id.startswith("close_long_for_short"):
-        return "多單反手轉空"
-    elif order_id.startswith("close_short_for_long"):
-        return "空單反手轉多"
-    return "unknown"
+        return {"status":"error","message":str(e)}
 
 
+# 🗂️ 15 列完整版 /webhook
 @app.post("/webhook")
 async def webhook_handler(payload: WebhookPayload):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sid = payload.strategy_id
-    event = payload.signal_type
-    equity = payload.equity
-    drawdown = None
-    action = payload.data.action if payload.data else ""
+    # 0. Pine 時間（假設前端已傳 "time" 欄位，格式同 tv_webhook）
+    pine_time   = payload.__dict__.get("time", "")  
+    # 1. Server 接收時戳（台北時區）
+    tz_tw       = timezone(timedelta(hours=8))
+    server_time = datetime.now(tz=tz_tw).strftime("%Y-%m-%d %H:%M:%S")
 
-    try:
-        with open(log_json_path, "r+") as f:
-            logs = json.load(f)
-            logs.append({
-                "timestamp": timestamp,
-                "strategy_id": sid,
-                "event": event,
-                "equity": equity,
-                "drawdown": drawdown,
-                "order_action": action
-            })
-            f.seek(0)
-            json.dump(logs, f, indent=2)
-        print(f"[📥 已寫入 log.json] {sid} {event}")
-    except Exception as e:
-        print(f"[⚠️ log.json 寫入失敗]：{e}")
+    # 2. 其它欄位解包
+    strategy_id  = payload.strategy_id
+    event        = payload.signal_type
+    equity       = payload.equity
+    drawdown     = None
+    order_action = payload.data.action       if payload.data else ""
+    trigger_type = payload.signal_type
+    comment      = None
+    contracts    = payload.data.position_size if payload.data else None
 
-    write_to_gsheet(timestamp, sid, event, equity, drawdown, action)
+    # 3. 這裡沒訂單回報，所以留空
+    ret_code = None
+    ret_msg  = None
+    pnl      = None
+    price    = None
+    qty      = None
 
-    # ✅ 自動下單
-    if event in ["entry_long", "entry_short"] and payload.data:
-        if action and payload.symbol and payload.data.position_size > 0:
-            side = "Buy" if action == "buy" else "Sell"
-            try:
-                result = await place_order(payload.symbol, side, payload.data.position_size)
-                print("[✅ 已執行下單]", result)
-            except Exception as e:
-                print("[⚠️ 下單失敗]", e)
+    # 4. 寫入 Google Sheets（15 列）
+    write_to_gsheet(
+        pine_time,  server_time,
+        strategy_id, event,
+        equity,     drawdown,
+        order_action, trigger_type,
+        comment,    contracts,
+        ret_code,   ret_msg,
+        pnl,        price,
+        qty
+    )
 
-    await push_line_message(f"✅ 策略 {sid} 收到訊號：{event}，動作：{action}")
-    return {"status": "ok", "strategy_id": sid}
+    return {"status": "ok", "strategy_id": strategy_id}
+
 
 # ✅ 健康檢查路由，支援 GET 與 HEAD 請求（避免 405 錯誤）
 # 📌 給 UptimeRobot 使用，保持 Render Server 醒著
