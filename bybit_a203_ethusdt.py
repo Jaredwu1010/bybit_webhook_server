@@ -343,15 +343,15 @@ async def tv_webhook(request: Request):
 
          # 寫入 Google Sheet（15 欄）
         if sheet:
-            sheet.append_row([
+            write_to_gsheet(
                 pine_time, server_time,
                 strategy_id, event,
-                equity, "",         # drawdown
+                equity, None,                     # drawdown
                 order_action, trigger_type,
-                comment, contracts or "",
-                ret_code or "", ret_msg or "",
-                pnl or "", price, qty
-            ])
+                comment, contracts,
+                ret_code, ret_msg,
+                pnl, price, qty
+            )
 
         return {"status":"ok"}
 
@@ -401,12 +401,15 @@ async def tv_webhook_test(request: Request):
             f.seek(0); json.dump(logs,f,indent=2)
 
         if sheet:
-            sheet.append_row([
+            write_to_gsheet(
                 pine_time, server_time,
-                strategy_id, order_id+"_test",
-                "", "", action, trigger_type,
-                "", "", "", "", "", price, 0.01
-            ])
+                strategy_id, order_id + "_test",
+                None, None,                    # equity, drawdown
+                action, trigger_type,
+                None, None,                    # comment, contracts
+                None, None, None,              # ret_code, ret_msg, pnl
+                price, 0.01
+            )
 
         return {"status":"ok"}
     except Exception as e:
