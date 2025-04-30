@@ -239,46 +239,42 @@ async def equity_status():
 async def tv_webhook(request: Request):
     try:
         payload = await request.json()
-        # 驗證 secret
-        if payload.get("secret","") != os.getenv("WEBHOOK_SECRET","letmein"):
-            return {"status":"unauthorized"}
+        if payload.get("secret", "") != os.getenv("WEBHOOK_SECRET", "letmein"):
+            return {"status": "unauthorized"}
 
-        # 拆解
-        strategy_id     = payload.get("strategy_id","")
-        order_id        = payload.get("order_id","")
-        trigger_type    = payload.get("trigger_type","")
-        comment         = payload.get("comment","")
-        contracts       = payload.get("contracts",None)
-        symbol          = payload.get("symbol","")
+        strategy_id  = payload.get("strategy_id", "")
+        order_id     = payload.get("order_id", "")
+        trigger_type = payload.get("trigger_type", "")
+        comment      = payload.get("comment", "")
+        contracts    = payload.get("contracts", None)
+        symbol       = payload.get("symbol", "")
         if symbol.endswith(".P"): symbol = symbol[:-2]
-        price           = float(payload.get("price",0))
-        capital_percent = float(payload.get("capital_percent",0))
-        event           = order_id
-        order_action    = infer_action_from_order_id(order_id)
+        price        = float(payload.get("price", 0))
+        capital_percent = float(payload.get("capital_percent", 0))
+        event        = order_id
+        order_action = infer_action_from_order_id(order_id)
 
-        # 時間
-        pine_time   = payload.get("time","")
+        pine_time   = payload.get("time", "")
         tz_tw       = timezone(timedelta(hours=8))
         server_time = datetime.now(tz=tz_tw).strftime("%Y-%m-%d %H:%M:%S")
 
-        # 3️⃣ Bybit API 取餘額（不變動）
+        # 取餘額
         api_key    = os.getenv("BYBIT_API_KEY")
         api_secret = os.getenv("BYBIT_API_SECRET")
-        base_url  = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
-        endpoint  = f"{base_url}/v5/account/wallet-balance?accountType=UNIFIED"
+        base_url   = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
+        endpoint   = f"{base_url}/v5/account/wallet-balance?accountType=UNIFIED"
 
-        timestamp = str(int(time.time() * 1000))
-        recv_window = "5000"
+        timestamp    = str(int(time.time() * 1000))
+        recv_window  = "5000"
         query_string = "accountType=UNIFIED"
-        sign_str = timestamp + api_key + recv_window + query_string
-        signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
-        headers = {
+        sign_str     = timestamp + api_key + recv_window + query_string
+        signature    = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+        headers      = {
             "X-BAPI-API-KEY": api_key,
             "X-BAPI-TIMESTAMP": timestamp,
             "X-BAPI-RECV-WINDOW": recv_window,
             "X-BAPI-SIGN": signature
         }
-
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(endpoint, headers=headers)
@@ -299,122 +295,121 @@ async def tv_webhook(request: Request):
             print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
             equity = float(os.getenv("EQUITY_FALLBACK", "100"))
 
-       # 自動下單（只有 entry_*）
         is_entry = order_id.startswith("entry_")
         if is_entry:
-            qty = round((equity * capital_percent/100)/price,2)
-            if qty>=0.01:
+            qty = round((equity * capital_percent/100)/price, 2)
+            if qty >= 0.01:
                 order_result = await place_order(
                     symbol,
                     "Buy" if "long" in order_action else "Sell",
                     qty
                 )
             else:
-                order_result = {"retCode":None,"retMsg":"qty too small","result":{}}
+                order_result = {"retCode": None, "retMsg": "qty too small", "result": {}}
         else:
             qty = 0.0
-            order_result = {"retCode":None,"retMsg":"not entry","result":{}}
+            order_result = {"retCode": None, "retMsg": "not entry", "result": {}}
 
-        # 6. 拿到下单回报
         ret_code = order_result.get("retCode")
         ret_msg  = order_result.get("retMsg")
-        pnl      = order_result.get("result",{}).get("cumRealisedPnl",None)
+        pnl      = order_result.get("result", {}).get("cumRealisedPnl", None)
 
-         # 寫入 log.json
-        with open(log_json_path,"r+") as f:
+        # 寫入 log.json
+        with open(log_json_path, "r+") as f:
             logs = json.load(f)
             logs.append({
-                "pine_time":    pine_time,
-                "server_time":  server_time,
-                "strategy_id":  strategy_id,
-                "event":        event,
+                "pine_time": pine_time,
+                "server_time": server_time,
+                "strategy_id": strategy_id,
+                "event": event,
                 "trigger_type": trigger_type,
-                "comment":      comment,
-                "contracts":    contracts,
-                "equity":       equity,
+                "comment": comment,
+                "contracts": contracts,
+                "equity": equity,
                 "order_action": order_action,
-                "ret_code":     ret_code,
-                "ret_msg":      ret_msg,
-                "pnl":          pnl,
-                "price":        price,
-                "qty":          qty
+                "ret_code": ret_code,
+                "ret_msg": ret_msg,
+                "pnl": pnl,
+                "price": price,
+                "qty": qty
             })
-            f.seek(0); json.dump(logs,f,indent=2)
+            f.seek(0); json.dump(logs, f, indent=2)
 
-         # 寫入 Google Sheet（15 欄）
+        # 寫入 Google Sheets
         if sheet:
             write_to_gsheet(
                 pine_time, server_time,
                 strategy_id, event,
-                equity, None,                     # drawdown
+                equity, None,            # drawdown
                 order_action, trigger_type,
                 comment, contracts,
                 ret_code, ret_msg,
                 pnl, price, qty
             )
 
-        return {"status":"ok"}
-
+        return {"status": "ok"}
     except Exception as e:
         print(f"[⚠️ TV Webhook 錯誤]：{e}")
-        return {"status":"error","message":str(e)}
+        return {"status": "error", "message": str(e)}
         
 @app.post("/tv_webhook_test")
 async def tv_webhook_test(request: Request):
     try:
         payload = await request.json()
-        if payload.get("secret","") != os.getenv("WEBHOOK_SECRET","letmein"):
-            return {"status":"unauthorized"}
+        if payload.get("secret", "") != os.getenv("WEBHOOK_SECRET", "letmein"):
+            return {"status": "unauthorized"}
 
-        strategy_id  = payload.get("strategy_id","")
-        order_id     = payload.get("order_id","")
+        strategy_id  = payload.get("strategy_id", "")
+        order_id     = payload.get("order_id", "")
         action       = "Buy" if "long" in order_id else "Sell"
-        symbol       = payload.get("symbol","")
-        price        = float(payload.get("price",0))
-        trigger_type = payload.get("trigger_type","")
+        symbol       = payload.get("symbol", "")
+        price        = float(payload.get("price", 0))
+        trigger_type = payload.get("trigger_type", "")
 
-        pine_time   = payload.get("time","")
+        pine_time   = payload.get("time", "")
         tz_tw       = timezone(timedelta(hours=8))
         server_time = datetime.now(tz=tz_tw).strftime("%Y-%m-%d %H:%M:%S")
 
         await place_order(symbol, action, 0.01)
 
-        with open(log_json_path,"r+") as f:
+        # log.json
+        with open(log_json_path, "r+") as f:
             logs = json.load(f)
             logs.append({
-                "pine_time":    pine_time,
-                "server_time":  server_time,
-                "strategy_id":  strategy_id,
-                "event":        order_id+"_test",
-                "equity":       None,
-                "drawdown":     None,
+                "pine_time": pine_time,
+                "server_time": server_time,
+                "strategy_id": strategy_id,
+                "event": order_id + "_test",
+                "equity": None,
+                "drawdown": None,
                 "order_action": action,
                 "trigger_type": trigger_type,
-                "comment":      None,
-                "contracts":    None,
-                "ret_code":     None,
-                "ret_msg":      None,
-                "pnl":          None,
-                "price":        price,
-                "qty":          0.01
+                "comment": None,
+                "contracts": None,
+                "ret_code": None,
+                "ret_msg": None,
+                "pnl": None,
+                "price": price,
+                "qty": 0.01
             })
-            f.seek(0); json.dump(logs,f,indent=2)
+            f.seek(0); json.dump(logs, f, indent=2)
 
+        # Google Sheets
         if sheet:
             write_to_gsheet(
                 pine_time, server_time,
                 strategy_id, order_id + "_test",
-                None, None,                    # equity, drawdown
+                None, None,           # equity, drawdown
                 action, trigger_type,
-                None, None,                    # comment, contracts
-                None, None, None,              # ret_code, ret_msg, pnl
+                None, None,           # comment, contracts
+                None, None, None,     # ret_code, ret_msg, pnl
                 price, 0.01
             )
 
-        return {"status":"ok"}
+        return {"status": "ok"}
     except Exception as e:
         print(f"[⚠️ TV 測試 webhook 錯誤]：{e}")
-        return {"status":"error","message":str(e)}
+        return {"status": "error", "message": str(e)}
 
 
 # 🗂️ 15 列完整版 /webhook
