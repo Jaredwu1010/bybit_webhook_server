@@ -299,9 +299,10 @@ async def tv_webhook(request: Request):
         if is_entry:
             qty = round((equity * capital_percent/100)/price, 2)
             if qty >= 0.01:
+                side = "Buy" if "long" in order_id else "Sell"
                 order_result = await place_order(
                     symbol,
-                    "Buy" if "long" in order_action else "Sell",
+                    side,
                     qty
                 )
             else:
