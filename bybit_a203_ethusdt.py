@@ -17,6 +17,13 @@ import time
 import hmac
 import hashlib
 
+# ——— 小工具：空字串/None 時回傳預設值 0.0 ———
+def safe_float(val: str | float | int | None, default: float = 0.0) -> float:
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+        
 app = FastAPI()
 
 Path("static").mkdir(parents=True, exist_ok=True)  # 📁 確保 static 資料夾存在
@@ -229,10 +236,11 @@ async def equity_status():
         async with httpx.AsyncClient() as client:
             response = await client.get(endpoint, headers=headers)
             data = response.json()
-            usdt_balance = float(data["result"]["list"][0]["totalEquity"])
+            raw_equity   = data["result"]["list"][0].get("totalEquity")
+            usdt_balance = safe_float(raw_equity)      # ← 自動處理空字串 / None
             return {"status": "ok", "equity": usdt_balance}
     except Exception as e:
-        fallback = float(os.getenv("EQUITY_FALLBACK", "100"))
+        fallback = safe_float(os.getenv("EQUITY_FALLBACK", "100"))
         return {"status": "fallback", "equity": fallback, "error": str(e)}
 
 @app.post("/tv_webhook")
@@ -249,8 +257,8 @@ async def tv_webhook(request: Request):
         contracts    = payload.get("contracts", None)
         symbol       = payload.get("symbol", "")
         if symbol.endswith(".P"): symbol = symbol[:-2]
-        price        = float(payload.get("price", 0))
-        capital_percent = float(payload.get("capital_percent", 0))
+        price           = safe_float(payload.get("price"))
+        capital_percent = safe_float(payload.get("capital_percent"))
         event        = order_id
         order_action = infer_action_from_order_id(order_id)
 
@@ -288,12 +296,12 @@ async def tv_webhook(request: Request):
                     or usdt_info.get("availableToWithdraw")
                     or usdt_info.get("equity")
                 )
-                equity = float(equity_str) if equity_str not in ["", None] else float(os.getenv("EQUITY_FALLBACK", "100"))
+                equity = safe_float(equity_str, default=safe_float(os.getenv("EQUITY_FALLBACK", "100")))
             else:
-                equity = float(os.getenv("EQUITY_FALLBACK", "100"))
+                equity = safe_float(os.getenv("EQUITY_FALLBACK", "100"))
         except Exception as e:
             print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
-            equity = float(os.getenv("EQUITY_FALLBACK", "100"))
+            equity = safe_float(os.getenv("EQUITY_FALLBACK", "100"))
 
         is_entry = order_id.startswith("entry_")
         if is_entry:
@@ -364,7 +372,7 @@ async def tv_webhook_test(request: Request):
         order_id     = payload.get("order_id", "")
         action       = "Buy" if "long" in order_id else "Sell"
         symbol       = payload.get("symbol", "")
-        price        = float(payload.get("price", 0))
+        price        = safe_float(payload.get("price"))
         trigger_type = payload.get("trigger_type", "")
 
         pine_time   = payload.get("time", "")
