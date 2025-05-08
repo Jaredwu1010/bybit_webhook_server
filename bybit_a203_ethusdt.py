@@ -122,13 +122,13 @@ async def place_order(symbol: str, side: str, qty: float):
 
     timestamp = str(int(time.time() * 1000))
     recv_window = "5000"
+    # 市价单不需要 timeInForce，也不要带 price
     payload = {
         "category": "linear",
         "symbol": symbol,
         "side": side,
         "orderType": "Market",
-        "qty": str(qty),
-        "timeInForce": "IOC"
+        "qty": str(qty)
     }
     payload_str = json.dumps(payload, separators=(",", ":"))
     sign_str = timestamp + api_key + recv_window + payload_str
