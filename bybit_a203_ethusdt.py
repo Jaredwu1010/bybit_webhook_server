@@ -257,8 +257,8 @@ async def tv_webhook(request: Request):
         contracts    = payload.get("contracts", None)
         symbol       = payload.get("symbol", "")
         if symbol.endswith(".P"): symbol = symbol[:-2]
-        price           = safe_float(payload.get("price"))
-        capital_percent = safe_float(payload.get("capital_percent"))
+        price           = safe_float(payload.get("price"), 0.0)
+        capital_percent = safe_float(payload.get("capital_percent"), 0.0)
         event        = order_id
         order_action = infer_action_from_order_id(order_id)
 
@@ -304,20 +304,20 @@ async def tv_webhook(request: Request):
             equity = safe_float(os.getenv("EQUITY_FALLBACK", "100"))
 
         is_entry = order_id.startswith("entry_")
-        if is_entry:
-            qty = round((equity * capital_percent/100)/price, 2)
+
+        # ===❗ 僅當 price 與 capital_percent 都有效 (>0) 才嘗試下單 ===
+        if is_entry and price > 0 and capital_percent > 0:
+            qty = round((equity * capital_percent / 100) / price, 2)
             if qty >= 0.01:
                 side = "Buy" if "long" in order_id else "Sell"
-                order_result = await place_order(
-                    symbol,
-                    side,
-                    qty
-                )
+                order_result = await place_order(symbol, side, qty)
             else:
                 order_result = {"retCode": None, "retMsg": "qty too small", "result": {}}
         else:
+            # 進不到下單；但仍要紀錄，方便日後追蹤
             qty = 0.0
-            order_result = {"retCode": None, "retMsg": "not entry", "result": {}}
+            reason = "invalid price/cap_percent" if is_entry else "not entry"
+            order_result = {"retCode": None, "retMsg": reason, "result": {}}
 
         ret_code = order_result.get("retCode")
         ret_msg  = order_result.get("retMsg")
