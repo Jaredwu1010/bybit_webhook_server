@@ -304,6 +304,7 @@ async def tv_webhook(request: Request):
             equity = safe_float(os.getenv("EQUITY_FALLBACK", "100"))
 
         is_entry = order_id.startswith("entry_")
+        contracts = safe_float(payload.get("contracts"), 0.0)
 
         # ===❗ 僅當 price 與 capital_percent 都有效 (>0) 才嘗試下單 ===
         if is_entry and price > 0 and capital_percent > 0:
@@ -318,6 +319,17 @@ async def tv_webhook(request: Request):
             qty = 0.0
             reason = "invalid price/cap_percent" if is_entry else "not entry"
             order_result = {"retCode": None, "retMsg": reason, "result": {}}
+
+        # —— 新增：若是 Exit 信号（非 entry_），且 payload.contracts > 0，
+        #       就用 Market 单平掉那笔仓位 —— 
+        if not is_entry and contracts > 0:
+            # 根据 order_id 判断是多单还是空单，反向下单
+            side = "Buy" if "_short" in order_id else "Sell"
+            # contracts 已经是正数
+            exit_result = await place_order(symbol, side, contracts)
+            # （可选）覆盖 ret_code/ret_msg 为 exit_result 的结果
+            ret_code = exit_result.get("retCode")
+            ret_msg  = exit_result.get("retMsg")
 
         ret_code = order_result.get("retCode")
         ret_msg  = order_result.get("retMsg")
