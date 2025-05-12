@@ -349,16 +349,17 @@ async def tv_webhook(request: Request):
         ret_msg  = order_result.get("retMsg")
         pnl      = order_result.get("result", {}).get("cumRealisedPnl", None)
 
-        # 新增：解析 Bybit API 回傳的真實成交量
-        executed_qty = safe_float(
-            order_result.get("result", {}).get("cumExecQty")
-            or order_result.get("result", {}).get("execQty")
-            or order_result.get("result", {}).get("qty"),
-            0.0
-        )
-        # 用 executed_qty 覆寫 contracts 與 qty
-        contracts = executed_qty
-        qty       = executed_qty
+        # 如果是 Exit 分支，再解析並覆寫成交量（Entry 不受影響）
+        if action in ("tp1", "stop", "trail", "breakeven", "residual"):
+            executed_qty = safe_float(
+                order_result.get("result", {}).get("cumExecQty")
+                or order_result.get("result", {}).get("execQty")
+                or order_result.get("result", {}).get("qty"),
+                0.0
+            )
+            # 僅在 Exit 時用 Bybit 回傳量覆寫
+            contracts = executed_qty
+            qty       = executed_qty
         # ——————————————————————————————————————————————————————————————
 
         # 寫入 log.json
