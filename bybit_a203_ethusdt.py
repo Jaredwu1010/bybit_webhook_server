@@ -114,7 +114,7 @@ async def push_line_message(msg: str):
         print("[LINE 回應]", r.status_code, await r.aread())
 
 # ✅ Bybit 下單模組
-async def place_order(symbol: str, side: str, qty: float):
+async def place_order(symbol: str, side: str, qty: float, reduce_only: bool = False):
     api_key = os.getenv("BYBIT_API_KEY")
     api_secret = os.getenv("BYBIT_API_SECRET")
     base_url = os.getenv("BYBIT_API_URL", "https://api-testnet.bybit.com")
@@ -130,6 +130,10 @@ async def place_order(symbol: str, side: str, qty: float):
         "orderType": "Market",
         "qty": str(qty)
     }
+    # 如果是減倉單，帶上 reduce_only 參數
+    if reduce_only:
+        payload["reduce_only"] = True
+        
     payload_str = json.dumps(payload, separators=(",", ":"))
     sign_str = timestamp + api_key + recv_window + payload_str
     signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
