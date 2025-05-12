@@ -308,8 +308,11 @@ async def tv_webhook(request: Request):
             print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
             equity = safe_float(os.getenv("EQUITY_FALLBACK", "100"))
 
-        # 先拆解 order_id，取得 action（entry/tp1/stop/trail/breakeven/residual）和方向 long/short
-        action, direction = order_id.split("_", 1)
+        # 先拆解 order_id，取得 action（entry/tp1/...）與方向字串，並判斷是否為多單
+        parts     = order_id.split("_")
+        action    = parts[0]
+        direction = parts[1] if len(parts) > 1 else ""
+        is_long   = direction.startswith("long")
         # contracts 由 executed_qty 覆寫，這裡暫不讀
 
         # 根據 action 分流：entry 開倉，exit 類型減倉，其它不動
@@ -317,14 +320,14 @@ async def tv_webhook(request: Request):
             # 開倉邏輯（原來的 entry 部分）
             qty = round((equity * capital_percent / 100) / price, 2)
             if qty >= 0.01:
-                side = "Buy" if direction == "long" else "Sell"
+                side = "Buy" if is_long else "Sell"
                 order_result = await place_order(symbol, side, qty, )
             else:
                 order_result = {"retCode": None, "retMsg": "qty too small", "result": {}}
 
         elif action in ("tp1", "stop", "trail", "breakeven", "residual") and abs(contracts) > 0:
             # 減倉／平倉邏輯
-            side = "Sell" if direction == "long" else "Buy"
+            side = "Sell" if is_long else "Buy"
             exit_result = await place_order(symbol, side, abs(contracts), reduce_only=True)
             # 直接把平倉結果覆寫
             order_result = {
