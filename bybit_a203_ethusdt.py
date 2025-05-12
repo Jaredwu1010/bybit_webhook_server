@@ -258,7 +258,8 @@ async def tv_webhook(request: Request):
         order_id     = payload.get("order_id", "")
         trigger_type = payload.get("trigger_type", "")
         comment      = payload.get("comment", "")
-        contracts    = payload.get("contracts", None)
+        # 不再使用 TV payload 的 contracts
+        # contracts    = payload.get("contracts", None)
         symbol       = payload.get("symbol", "")
         if symbol.endswith(".P"): symbol = symbol[:-2]
         price           = safe_float(payload.get("price"), 0.0)
@@ -309,7 +310,7 @@ async def tv_webhook(request: Request):
 
         # 先拆解 order_id，取得 action（entry/tp1/stop/trail/breakeven/residual）和方向 long/short
         action, direction = order_id.split("_", 1)
-        contracts = safe_float(payload.get("contracts"), 0.0)
+        # contracts 由 executed_qty 覆寫，這裡暫不讀
 
         # 根據 action 分流：entry 開倉，exit 類型減倉，其它不動
         if action == "entry" and price > 0 and capital_percent > 0:
@@ -340,22 +341,21 @@ async def tv_webhook(request: Request):
             order_result = {"retCode": None, "retMsg": reason, "result": {}}
 
         
-        # —— 共用：解析下單回傳、寫 log.json & Google Sheets —— 
+        # —— 共用：解析下單回傳 —— 
         ret_code = order_result.get("retCode")
         ret_msg  = order_result.get("retMsg")
         pnl      = order_result.get("result", {}).get("cumRealisedPnl", None)
 
-      
-        # ——————————————— 新增：解析 Bybit 回傳的真實成交量 ———————————————
-          executed_qty = safe_float(
-              order_result.get("result", {}).get("cumExecQty")
-              or order_result.get("result", {}).get("execQty")
-              or order_result.get("result", {}).get("qty"),
-              0.0
-          )
-          # 用 Bybit 回傳的量覆寫 contracts 與 qty
-          contracts    = executed_qty
-          qty          = executed_qty
+        # 新增：解析 Bybit API 回傳的真實成交量
+        executed_qty = safe_float(
+            order_result.get("result", {}).get("cumExecQty")
+            or order_result.get("result", {}).get("execQty")
+            or order_result.get("result", {}).get("qty"),
+            0.0
+        )
+        # 用 executed_qty 覆寫 contracts 與 qty
+        contracts = executed_qty
+        qty       = executed_qty
         # ——————————————————————————————————————————————————————————————
 
         # 寫入 log.json
