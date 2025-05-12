@@ -321,7 +321,7 @@ async def tv_webhook(request: Request):
             else:
                 order_result = {"retCode": None, "retMsg": "qty too small", "result": {}}
 
-        elif action in ("tp1", "stop", "trail", "breakeven", "residual") and contracts > 0:
+        elif action in ("tp1", "stop", "trail", "breakeven", "residual") and abs(contracts) > 0:
             # 減倉／平倉邏輯
             side = "Sell" if direction == "long" else "Buy"
             exit_result = await place_order(symbol, side, abs(contracts), reduce_only=True)
