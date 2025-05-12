@@ -345,6 +345,19 @@ async def tv_webhook(request: Request):
         ret_msg  = order_result.get("retMsg")
         pnl      = order_result.get("result", {}).get("cumRealisedPnl", None)
 
+      
+        # ——————————————— 新增：解析 Bybit 回傳的真實成交量 ———————————————
+          executed_qty = safe_float(
+              order_result.get("result", {}).get("cumExecQty")
+              or order_result.get("result", {}).get("execQty")
+              or order_result.get("result", {}).get("qty"),
+              0.0
+          )
+          # 用 Bybit 回傳的量覆寫 contracts 與 qty
+          contracts    = executed_qty
+          qty          = executed_qty
+        # ——————————————————————————————————————————————————————————————
+
         # 寫入 log.json
         with open(log_json_path, "r+") as f:
             logs = json.load(f)
