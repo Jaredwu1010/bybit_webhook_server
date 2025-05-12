@@ -303,34 +303,40 @@ async def tv_webhook(request: Request):
             print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
             equity = safe_float(os.getenv("EQUITY_FALLBACK", "100"))
 
-        is_entry = order_id.startswith("entry_")
+        # 先拆解 order_id，取得 action（entry/tp1/stop/trail/breakeven/residual）和方向 long/short
+        action, direction = order_id.split("_", 1)
         contracts = safe_float(payload.get("contracts"), 0.0)
 
-        # ===❗ 僅當 price 與 capital_percent 都有效 (>0) 才嘗試下單 ===
-        if is_entry and price > 0 and capital_percent > 0:
+        # 根據 action 分流：entry 開倉，exit 類型減倉，其它不動
+        if action == "entry" and price > 0 and capital_percent > 0:
+            # 開倉邏輯（原來的 entry 部分）
             qty = round((equity * capital_percent / 100) / price, 2)
             if qty >= 0.01:
-                side = "Buy" if "long" in order_id else "Sell"
-                order_result = await place_order(symbol, side, qty)
+                side = "Buy" if direction == "long" else "Sell"
+                order_result = await place_order(symbol, side, qty, )
             else:
                 order_result = {"retCode": None, "retMsg": "qty too small", "result": {}}
+
+        elif action in ("tp1", "stop", "trail", "breakeven", "residual") and contracts > 0:
+            # 減倉／平倉邏輯
+            side = "Sell" if direction == "long" else "Buy"
+            exit_result = await place_order(symbol, side, abs(contracts), reduce_only=True)
+            # 直接把平倉結果覆寫
+            order_result = {
+                "retCode": exit_result.get("retCode"),
+                "retMsg": exit_result.get("retMsg"),
+                "result": exit_result.get("result", {})
+            }
+            qty = abs(contracts)
+
         else:
-            # 進不到下單；但仍要紀錄，方便日後追蹤
+            # 不符合下單條件
             qty = 0.0
-            reason = "invalid price/cap_percent" if is_entry else "not entry"
+            reason = "invalid price/cap_percent" if action == "entry" else "not entry"
             order_result = {"retCode": None, "retMsg": reason, "result": {}}
 
-        # —— 新增：若是 Exit 信号（非 entry_），且 payload.contracts > 0，
-        #       就用 Market 单平掉那笔仓位 —— 
-        if not is_entry and contracts > 0:
-            # 根据 order_id 判断是多单还是空单，反向下单
-            side = "Buy" if "_short" in order_id else "Sell"
-            # contracts 已经是正数
-            exit_result = await place_order(symbol, side, contracts)
-            # （可选）覆盖 ret_code/ret_msg 为 exit_result 的结果
-            ret_code = exit_result.get("retCode")
-            ret_msg  = exit_result.get("retMsg")
-
+        
+        # —— 共用：解析下單回傳、寫 log.json & Google Sheets —— 
         ret_code = order_result.get("retCode")
         ret_msg  = order_result.get("retMsg")
         pnl      = order_result.get("result", {}).get("cumRealisedPnl", None)
