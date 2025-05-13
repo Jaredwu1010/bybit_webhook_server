@@ -16,6 +16,7 @@ import collections
 import time
 import hmac
 import hashlib
+import math
 
 # ——— 小工具：空字串/None 時回傳預設值 0.0 ———
 def safe_float(val: str | float | int | None, default: float = 0.0) -> float:
@@ -319,28 +320,43 @@ async def tv_webhook(request: Request):
         contracts = safe_float(payload.get("contracts"), 0.0)
 
         # 根據 action 分流：entry 開倉，exit 類型減倉，其它不動
+        # 进到 tv_webhook 的 action 分流处，替换 entry 分支为：
         if action == "entry" and price > 0 and capital_percent > 0:
-            # 開倉邏輯（原來的 entry 部分）
-            qty = round((equity * capital_percent / 100) / price, 2)
-            if qty >= 0.01:
-                side = "Buy" if is_long else "Sell"
-                order_result = await place_order(symbol, side, qty, )
-            else:
+            # 修正最小下單單位為 0.01 ETH
+            avail    = equity
+            raw_qty  = (avail * capital_percent / 100) / price
+            min_unit = 0.01
+            qty      = math.floor(raw_qty / min_unit) * min_unit
+            if qty < min_unit:
                 order_result = {"retCode": None, "retMsg": "qty too small", "result": {}}
-
-        elif action in ("tp1", "stop", "trail", "breakeven", "residual") and abs(contracts) > 0:
-            # 平倉：tp1/stop/trail/breakeven 全部都不需要 reduce_only
-            # 只有最後的 residual（清殘倉）才用 reduce_only
+            else:
+                side         = "Buy" if is_long else "Sell"
+                order_result = await place_order(symbol, side, qty)
+        
+        elif action in ("tp1", "stop", "trail", "breakeven", "residual"):
+            # 平倉：tp1/stop/trail/breakeven 不要 reduce_only，residual 要
             side            = "Sell" if is_long else "Buy"
             reduce_flag     = True if action == "residual" else False
-            exit_result = await place_order(symbol, side, abs(contracts), reduce_only=reduce_flag)
+            
+            # 1) 下單時先用 TV payload 原本帶進來的 contracts
+            tv_contracts = safe_float(payload.get("contracts"), 0.0)
+            exit_result = await place_order(symbol, side, tv_contracts, reduce_only=reduce_flag)
+
             # 直接把平倉結果覆寫
             order_result = {
                 "retCode": exit_result.get("retCode"),
                 "retMsg": exit_result.get("retMsg"),
                 "result": exit_result.get("result", {})
             }
-            qty = abs(contracts)
+            # 2) 再從 Bybit 回傳結果解析真正成交量
+            executed_qty = safe_float(
+                exit_result.get("result", {}).get("cumExecQty")
+                or exit_result.get("result", {}).get("execQty")
+                or exit_result.get("result", {}).get("qty"),
+                0.0
+            )
+            contracts = executed_qty
+            qty       = executed_qty
 
         else:
             # 不符合下單條件
