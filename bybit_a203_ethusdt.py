@@ -311,12 +311,18 @@ async def tv_webhook(request: Request):
 
         # —— 先把TV傳的contracts讀回來（供 exit 下單參考）——
         contracts = safe_float(payload.get("contracts"), 0.0)
-        # 拆解 order_id → action, direction, is_long
+        # 拆解 order_id → action, direction, is_long（忽略 "rev" 後綴）
         parts     = order_id.split("_")
         action    = parts[0]
-        # 正確取最後一段當方向，避免像 stop_loss_long 拆成 ["stop","loss","long"] 時出錯
-        direction = parts[-1] if len(parts) > 1 else ""
-        is_long   = (direction == "long")
+        # parts 可能像 ["entry","long","rev"] 或 ["stop","loss","long"]
+        # 先看 parts[1]，若不是 long/short 再看 parts[2]
+        if len(parts) > 1 and parts[1] in ("long", "short"):
+            direction = parts[1]
+        elif len(parts) > 2 and parts[2] in ("long", "short"):
+            direction = parts[2]
+        else:
+            direction = ""
+        is_long = (direction == "long")
 
         # 根據 action 分流：entry 開倉，exit 類型減倉，其它不動
         # 进到 tv_webhook 的 action 分流处，替换 entry 分支为：
