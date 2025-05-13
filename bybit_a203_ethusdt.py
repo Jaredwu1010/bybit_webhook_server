@@ -343,25 +343,45 @@ async def tv_webhook(request: Request):
             side        = "Sell" if is_long else "Buy"
             reduce_flag = True
             
-            # 1) 下單時先用 TV payload 原本帶進來的 contracts
-            tv_contracts = safe_float(payload.get("contracts"), 0.0)
-            exit_result = await place_order(symbol, side, tv_contracts, reduce_only=reduce_flag)
-
-            # 2) 直接把平倉結果覆寫
-            order_result = {
-                "retCode": exit_result.get("retCode"),
-                "retMsg": exit_result.get("retMsg"),
-                "result": exit_result.get("result", {})
+            # —— 1) 先從 Bybit 查詢當前持倉量 —— 
+            position_endpoint = f"{base_url}/v5/position/list?category=linear&symbol={symbol}"
+            ts = str(int(time.time() * 1000))
+            recv_window = "5000"
+            query_string = f"category=linear&symbol={symbol}"
+            sign_str = ts + api_key + recv_window + query_string
+            signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+            pos_headers = {
+                "X-BAPI-API-KEY": api_key,
+                "X-BAPI-TIMESTAMP": ts,
+                "X-BAPI-RECV-WINDOW": recv_window,
+                "X-BAPI-SIGN": signature
             }
-            # 3) 再從 Bybit 回傳結果解析真正成交量
-            executed_qty = safe_float(
-                exit_result.get("result", {}).get("cumExecQty")
-                or exit_result.get("result", {}).get("execQty")
-                or exit_result.get("result", {}).get("qty"),
-                0.0
-            )
-            contracts = executed_qty
-            qty       = executed_qty
+            async with httpx.AsyncClient() as client:
+                pos_resp = await client.get(position_endpoint, headers=pos_headers)
+                pos_data = pos_resp.json()
+            raw_size = pos_data["result"]["list"][0].get("size", 0)
+            tv_contracts = safe_float(raw_size, 0.0)
+
+            # —— 2) 若無持倉則跳過 —— 
+            if tv_contracts < 0.01:
+                order_result = {"retCode": None, "retMsg": "no position to close", "result": {}}
+            else:
+                # —— 3) 用真實持倉量平倉 —— 
+                exit_result = await place_order(symbol, side, tv_contracts, reduce_only=reduce_flag)
+                order_result = {
+                    "retCode": exit_result.get("retCode"),
+                    "retMsg": exit_result.get("retMsg"),
+                    "result": exit_result.get("result", {})
+                }
+                # —— 4) 解析成交量並覆寫 contracts/qty —— 
+                executed_qty = safe_float(
+                    exit_result["result"].get("cumExecQty")
+                    or exit_result["result"].get("execQty")
+                    or exit_result["result"].get("qty"),
+                    0.0
+                )
+                contracts = executed_qty
+                qty       = executed_qty
 
         else:
             # 不符合下單條件
