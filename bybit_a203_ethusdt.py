@@ -309,15 +309,14 @@ async def tv_webhook(request: Request):
             print("[⚠️ 無法取得 Bybit 賬戶餘額]", e)
             equity = safe_float(os.getenv("EQUITY_FALLBACK", "100"))
 
-        # —— 先把TV傳的contracts讀回來（供exit條件判斷）——
-        contracts    = safe_float(payload.get("contracts"), 0.0)
+        # —— 先把TV傳的contracts讀回來（供 exit 下單參考）——
+        contracts = safe_float(payload.get("contracts"), 0.0)
         # 拆解 order_id → action, direction, is_long
         parts     = order_id.split("_")
         action    = parts[0]
-        direction = parts[1] if len(parts) > 1 else ""
-        is_long   = direction.startswith("long")
-        # 重新從 TV payload 解析 contracts（用於 Exit 下單的初始數量判斷）
-        contracts = safe_float(payload.get("contracts"), 0.0)
+        # 正確取最後一段當方向，避免像 stop_loss_long 拆成 ["stop","loss","long"] 時出錯
+        direction = parts[-1] if len(parts) > 1 else ""
+        is_long   = (direction == "long")
 
         # 根據 action 分流：entry 開倉，exit 類型減倉，其它不動
         # 进到 tv_webhook 的 action 分流处，替换 entry 分支为：
@@ -334,21 +333,21 @@ async def tv_webhook(request: Request):
                 order_result = await place_order(symbol, side, qty)
         
         elif action in ("tp1", "stop", "trail", "breakeven", "residual"):
-            # 平倉：tp1/stop/trail/breakeven 不要 reduce_only，residual 要
-            side            = "Sell" if is_long else "Buy"
-            reduce_flag     = True if action == "residual" else False
+            # 所有 exit 動作都要減倉（reduce_only=True）
+            side        = "Sell" if is_long else "Buy"
+            reduce_flag = True
             
             # 1) 下單時先用 TV payload 原本帶進來的 contracts
             tv_contracts = safe_float(payload.get("contracts"), 0.0)
             exit_result = await place_order(symbol, side, tv_contracts, reduce_only=reduce_flag)
 
-            # 直接把平倉結果覆寫
+            # 2) 直接把平倉結果覆寫
             order_result = {
                 "retCode": exit_result.get("retCode"),
                 "retMsg": exit_result.get("retMsg"),
                 "result": exit_result.get("result", {})
             }
-            # 2) 再從 Bybit 回傳結果解析真正成交量
+            # 3) 再從 Bybit 回傳結果解析真正成交量
             executed_qty = safe_float(
                 exit_result.get("result", {}).get("cumExecQty")
                 or exit_result.get("result", {}).get("execQty")
