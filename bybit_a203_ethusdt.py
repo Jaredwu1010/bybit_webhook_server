@@ -313,7 +313,8 @@ async def tv_webhook(request: Request):
         action    = parts[0]
         direction = parts[1] if len(parts) > 1 else ""
         is_long   = direction.startswith("long")
-        # contracts 由 executed_qty 覆寫，這裡暫不讀
+        # 重新從 TV payload 解析 contracts（用於 Exit 下單的初始數量判斷）
+        contracts = safe_float(payload.get("contracts"), 0.0)
 
         # 根據 action 分流：entry 開倉，exit 類型減倉，其它不動
         if action == "entry" and price > 0 and capital_percent > 0:
