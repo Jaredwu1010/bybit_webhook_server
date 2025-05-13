@@ -343,7 +343,31 @@ async def tv_webhook(request: Request):
             side        = "Sell" if is_long else "Buy"
             reduce_flag = True
             
-            # —— 1) 先從 Bybit 查詢當前持倉量 —— 
+            # —— 1) 先從 Bybit 查詢當前持倉量（依 side 擷取正確那一筆） ——
+            position_endpoint = f"{base_url}/v5/position/list?category=linear&symbol={symbol}"
+            ts = str(int(time.time() * 1000))
+            recv_window = "5000"
+            query_string = f"category=linear&symbol={symbol}"
+            sign_str = ts + api_key + recv_window + query_string
+            signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+            pos_headers = {
+                "X-BAPI-API-KEY": api_key,
+                "X-BAPI-TIMESTAMP": ts,
+                "X-BAPI-RECV-WINDOW": recv_window,
+                "X-BAPI-SIGN": signature
+            }
+            async with httpx.AsyncClient() as client:
+                pos_resp = await client.get(position_endpoint, headers=pos_headers)
+                pos_data = pos_resp.json()
+
+            # 根據 is_long 判斷要找 Buy 還是 Sell 那一行
+            position_side = "Buy" if is_long else "Sell"   # Long 倉在 Buy,  Short 倉在 Sell
+            tv_contracts  = 0.0
+            for p in pos_data.get("result", {}).get("list", []):
+                if p.get("side") == position_side:
+                    tv_contracts = safe_float(p.get("size"), 0.0)
+                    break
+                    
             position_endpoint = f"{base_url}/v5/position/list?category=linear&symbol={symbol}"
             ts = str(int(time.time() * 1000))
             recv_window = "5000"
