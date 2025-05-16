@@ -359,9 +359,8 @@ async def tv_webhook(request: Request):
                     break
 
             min_unit = 0.01
-            if pos_size < min_unit:
-                # 沒倉位：直接跳過、不寫 Sheet / Log
-            return {"status": "skip_no_position"}
+            if pos_size < min_unit:                # 沒倉位：直接跳過、不寫 Sheet / Log
+                return {"status": "skip_no_position"}
 
             # 3) 決定本次要平多少
             close_qty = pos_size
