@@ -339,73 +339,51 @@ async def tv_webhook(request: Request):
                 order_result = await place_order(symbol, side, qty)
         
         elif action in ("tp1", "stop", "trail", "breakeven", "residual"):
-            # 所有 exit 動作都要減倉（reduce_only=True）
-            side        = "Sell" if is_long else "Buy"
-            reduce_flag = True
-            
-            # —— 1) 先從 Bybit 查詢當前持倉量（依 side 擷取正確那一筆） ——
+            # 1) 查目前持倉
             position_endpoint = f"{base_url}/v5/position/list?category=linear&symbol={symbol}"
-            ts = str(int(time.time() * 1000))
-            recv_window = "5000"
-            query_string = f"category=linear&symbol={symbol}"
-            sign_str = ts + api_key + recv_window + query_string
-            signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
-            pos_headers = {
-                "X-BAPI-API-KEY": api_key,
-                "X-BAPI-TIMESTAMP": ts,
-                "X-BAPI-RECV-WINDOW": recv_window,
-                "X-BAPI-SIGN": signature
-            }
+            ts           = str(int(time.time()*1000))
+            recv_window  = "5000"
+            qstr         = f"category=linear&symbol={symbol}"
+            sig          = hmac.new(api_secret.encode(), (ts+api_key+recv_window+qstr).encode(), hashlib.sha256).hexdigest()
+            pos_headers  = {"X-BAPI-API-KEY": api_key, "X-BAPI-TIMESTAMP": ts,
+                            "X-BAPI-RECV-WINDOW": recv_window, "X-BAPI-SIGN": sig}
             async with httpx.AsyncClient() as client:
-                pos_resp = await client.get(position_endpoint, headers=pos_headers)
-                pos_data = pos_resp.json()
-
-            # 根據 is_long 判斷要找 Buy 還是 Sell 那一行
-            position_side = "Buy" if is_long else "Sell"   # Long 倉在 Buy,  Short 倉在 Sell
-            tv_contracts  = 0.0
+                pos_data = (await client.get(position_endpoint, headers=pos_headers)).json()
+        
+            # 2) 取得正確方向倉位大小
+            pos_side   = "Buy" if is_long else "Sell"
+            pos_size   = 0.0
             for p in pos_data.get("result", {}).get("list", []):
-                if p.get("side") == position_side:
-                    tv_contracts = safe_float(p.get("size"), 0.0)
+                if p.get("side") == pos_side:
+                    pos_size = safe_float(p.get("size"), 0.0)
                     break
-                    
-            position_endpoint = f"{base_url}/v5/position/list?category=linear&symbol={symbol}"
-            ts = str(int(time.time() * 1000))
-            recv_window = "5000"
-            query_string = f"category=linear&symbol={symbol}"
-            sign_str = ts + api_key + recv_window + query_string
-            signature = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
-            pos_headers = {
-                "X-BAPI-API-KEY": api_key,
-                "X-BAPI-TIMESTAMP": ts,
-                "X-BAPI-RECV-WINDOW": recv_window,
-                "X-BAPI-SIGN": signature
-            }
-            async with httpx.AsyncClient() as client:
-                pos_resp = await client.get(position_endpoint, headers=pos_headers)
-                pos_data = pos_resp.json()
-            raw_size = pos_data["result"]["list"][0].get("size", 0)
-            tv_contracts = safe_float(raw_size, 0.0)
 
-            # —— 2) 若無持倉則跳過 —— 
-            if tv_contracts < 0.01:
-                order_result = {"retCode": None, "retMsg": "no position to close", "result": {}}
-            else:
-                # —— 3) 用真實持倉量平倉 —— 
-                exit_result = await place_order(symbol, side, tv_contracts, reduce_only=reduce_flag)
-                order_result = {
-                    "retCode": exit_result.get("retCode"),
-                    "retMsg": exit_result.get("retMsg"),
-                    "result": exit_result.get("result", {})
-                }
-                # —— 4) 解析成交量並覆寫 contracts/qty —— 
-                executed_qty = safe_float(
-                    exit_result["result"].get("cumExecQty")
-                    or exit_result["result"].get("execQty")
-                    or exit_result["result"].get("qty"),
-                    0.0
-                )
-                contracts = executed_qty
-                qty       = executed_qty
+            min_unit = 0.01
+            if pos_size < min_unit:
+                # 沒倉位：直接跳過、不寫 Sheet / Log
+            return {"status": "skip_no_position"}
+
+            # 3) 決定本次要平多少
+            close_qty = pos_size
+            if action == "tp1":                         # 只平 50%
+                close_qty = max(min_unit,
+                                round(pos_size * 0.5, 2))
+
+            # 4) 下平倉 Market 減倉單
+            side        = "Sell" if is_long else "Buy"
+            exit_result = await place_order(symbol, side, close_qty, reduce_only=True)
+
+            order_result = {
+                "retCode": exit_result.get("retCode"),
+                "retMsg":  exit_result.get("retMsg"),
+                "result":  exit_result.get("result", {})
+            }
+            executed_qty = safe_float(
+                exit_result["result"].get("cumExecQty")
+                or exit_result["result"].get("execQty")
+                or exit_result["result"].get("qty"), 0.0)
+            contracts = executed_qty
+            qty       = executed_qty
 
         else:
             # 不符合下單條件
