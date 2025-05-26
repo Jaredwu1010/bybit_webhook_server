@@ -150,6 +150,33 @@ async def place_order(symbol: str, side: str, qty: float, reduce_only: bool = Fa
         print("[📤 Bybit 下單結果]", response.status_code, await response.aread())
         return response.json()
 
+# ──────────────────────────────
+# 重新抓取 Bybit 帳戶 USDT Equity
+async def fetch_equity(api_key: str, api_secret: str, base_url: str) -> float:
+    ts          = str(int(time.time() * 1000))
+    recv_window = "5000"
+    qstr        = "accountType=UNIFIED"
+    sign_str    = ts + api_key + recv_window + qstr
+    sig         = hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+
+    headers = {
+        "X-BAPI-API-KEY": api_key,
+        "X-BAPI-TIMESTAMP": ts,
+        "X-BAPI-RECV-WINDOW": recv_window,
+        "X-BAPI-SIGN": sig
+    }
+    async with httpx.AsyncClient() as client:
+        data = (await client.get(f"{base_url}/v5/account/wallet-balance?{qstr}",
+                                 headers=headers)).json()
+
+    usdt_info = next((c for c in data["result"]["list"][0]["coin"]
+                      if c["coin"] == "USDT"), {})
+    return safe_float(
+        usdt_info.get("equity") or
+        usdt_info.get("totalAvailableBalance") or
+        usdt_info.get("walletBalance"), 0.0)
+# ──────────────────────────────
+
 class WebhookPayloadData(BaseModel):
     action: str
     position_size: float
@@ -371,6 +398,9 @@ async def tv_webhook(request: Request):
             # 4) 下平倉 Market 減倉單
             side        = "Sell" if is_long else "Buy"
             exit_result = await place_order(symbol, side, close_qty, reduce_only=True)
+
+            # 4-1) 立刻重新抓最新 equity（確保 Entry 與 Stop Loss 的餘額不同）
+            equity = await fetch_equity(api_key, api_secret, base_url)
 
             order_result = {
                 "retCode": exit_result.get("retCode"),
